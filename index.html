@@ -290,6 +290,25 @@ input[type=password]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(
   .detail-row{grid-template-columns:22px 1fr 90px 90px 50px;}
   .detail-row>div{padding:7px 7px;font-size:11px;}
 }
+
+/* ── IMPORT ── */
+.import-zone{border:2px dashed var(--border);border-radius:8px;padding:28px;text-align:center;cursor:pointer;transition:all .2s;background:var(--card);margin-bottom:16px;}
+.import-zone:hover,.import-zone.drag{border-color:var(--accent);background:rgba(192,57,43,.04);}
+.import-zone input[type=file]{display:none;}
+.import-icon{font-size:28px;margin-bottom:8px;}
+.import-title{font-size:14px;font-weight:700;color:var(--ink2);margin-bottom:4px;}
+.import-sub{font-size:12px;color:var(--muted);}
+.import-preview{background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px;}
+.import-preview table{width:100%;border-collapse:collapse;font-size:12px;}
+.import-preview th{background:var(--navy);color:#fff;padding:8px 10px;text-align:left;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;}
+.import-preview td{padding:7px 10px;border-bottom:1px solid var(--border2);}
+.import-preview tr:last-child td{border-bottom:none;}
+.import-preview tbody tr:hover{background:rgba(28,43,58,.03);}
+.ip-ok{color:var(--success);font-weight:700;}
+.ip-err{color:var(--error);font-weight:700;}
+.import-stats{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap;}
+.import-stat{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px 16px;font-size:12px;font-weight:600;}
+.import-stat span{font-size:18px;font-weight:800;display:block;margin-bottom:2px;}
 </style>
 </head>
 <body>
@@ -1244,6 +1263,22 @@ function renderAdmin(){
     <div class="correct-hint">✓ Отмеченный вариант — правильный ответ</div>
   </div>`).join('');
   el.innerHTML=`<div class="admin-bar"><div>🛡 Режим администратора</div><button class="btn btn-ghost" style="padding:6px 12px;font-size:11px;color:#fff;border-color:rgba(255,255,255,.3)" onclick="logoutAdmin()">Выйти</button></div>
+  <div class="admin-section">
+    <h3>Импорт вопросов из XLSX</h3>
+    <div class="import-zone" id="import-zone" onclick="document.getElementById('import-file').click()"
+      ondragover="event.preventDefault();this.classList.add('drag')"
+      ondragleave="this.classList.remove('drag')"
+      ondrop="event.preventDefault();this.classList.remove('drag');handleImportFile(event.dataTransfer.files[0])">
+      <input type="file" id="import-file" accept=".xlsx,.xls" onchange="handleImportFile(this.files[0])">
+      <div class="import-icon">📥</div>
+      <div class="import-title">Нажмите или перетащите XLSX-файл</div>
+      <div class="import-sub">Столбцы: Должность | Вопрос | Вариант А | Вариант Б | Вариант В | Вариант Г | Правильный (А/Б/В/Г)</div>
+    </div>
+    <div id="import-result"></div>
+    <div style="margin-bottom:8px">
+      <a href="#" onclick="downloadTemplate();return false;" style="font-size:12px;font-weight:700;color:var(--accent);text-decoration:none;">⬇ Скачать шаблон XLSX</a>
+    </div>
+  </div>
   <div class="admin-section"><h3>Должность</h3><div style="display:flex;gap:8px;flex-wrap:wrap">${tabs}</div></div>
   <div class="admin-section"><h3>${POSITIONS.find(p=>p.id===adminPos).name} — ${qs.length} вопросов</h3>
   ${qBlocks||'<div class="empty-state"><div class="empty-icon">❓</div><p>Нет вопросов. Добавьте первый!</p></div>'}
@@ -1258,6 +1293,195 @@ function toggleDetail(id, btn){
   if(!panel) return;
   const open = panel.classList.toggle('open');
   btn.textContent = open ? '▼ Свернуть' : '▶ Подробно';
+}
+
+
+// ══════════════════════════════════
+// IMPORT
+// ══════════════════════════════════
+
+// Map position name variants to ids
+const POS_MAP = {
+  'начальник': 'nachalnik',
+  'инспектор': 'inspektor',
+  'дознаватель': 'doznavatel',
+};
+
+function posIdFromName(name){
+  if(!name) return null;
+  const n = String(name).trim().toLowerCase();
+  if(POS_MAP[n]) return POS_MAP[n];
+  // Partial match
+  for(const [k,v] of Object.entries(POS_MAP)){
+    if(n.includes(k)) return v;
+  }
+  return null;
+}
+
+async function handleImportFile(file){
+  if(!file) return;
+  const el = document.getElementById('import-result');
+  el.innerHTML = '<div style="padding:12px;font-size:13px;color:var(--muted)">Загружаем библиотеку...</div>';
+
+  // Load SheetJS for reading
+  await new Promise((res,rej)=>{
+    if(window.XLSX){res();return;}
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    s.onload=res; s.onerror=rej;
+    document.head.appendChild(s);
+  });
+
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, {type:'array'});
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+
+  if(raw.length < 2){
+    el.innerHTML = '<div style="color:var(--error);font-size:13px;padding:10px">Файл пустой или неверный формат.</div>';
+    return;
+  }
+
+  // Skip header row
+  const dataRows = raw.slice(1).filter(r => r.some(c => String(c).trim()));
+
+  const parsed = []; const errors = [];
+  const letterMap = {'а':0,'б':1,'в':2,'г':3,'a':0,'b':1,'c':2,'d':3,'1':0,'2':1,'3':2,'4':3};
+
+  dataRows.forEach((row, ri) => {
+    const posName  = String(row[0]||'').trim();
+    const qText    = String(row[1]||'').trim();
+    const optA     = String(row[2]||'').trim();
+    const optB     = String(row[3]||'').trim();
+    const optC     = String(row[4]||'').trim();
+    const optD     = String(row[5]||'').trim();
+    const correct  = String(row[6]||'').trim().toLowerCase();
+
+    const posId = posIdFromName(posName);
+    const correctIdx = letterMap[correct.charAt(0)];
+
+    if(!posId)    { errors.push({ri:ri+2, msg:`Неизвестная должность: "${posName}"`}); return; }
+    if(!qText)    { errors.push({ri:ri+2, msg:'Пустой вопрос'}); return; }
+    if(!optA||!optB||!optC||!optD) { errors.push({ri:ri+2, msg:'Не все варианты ответов заполнены'}); return; }
+    if(correctIdx===undefined) { errors.push({ri:ri+2, msg:`Неверное значение правильного ответа: "${row[6]}"`}); return; }
+
+    parsed.push({posId, text:qText, options:[optA,optB,optC,optD], correct:correctIdx});
+  });
+
+  // Count by position
+  const counts = {};
+  parsed.forEach(q => { counts[q.posId] = (counts[q.posId]||0)+1; });
+  const posNames = {'nachalnik':'Начальник','inspektor':'Инспектор','doznavatel':'Дознаватель'};
+
+  const statsHtml = Object.entries(counts).map(([id,cnt])=>
+    `<div class="import-stat"><span style="color:var(--accent)">${cnt}</span>${posNames[id]||id}</div>`
+  ).join('') + (errors.length ? `<div class="import-stat"><span style="color:var(--error)">${errors.length}</span>Ошибок</div>` : '');
+
+  const previewRows = parsed.slice(0,5).map(q=>`<tr>
+    <td>${posNames[q.posId]}</td>
+    <td>${escHtml(q.text.length>60?q.text.slice(0,60)+'…':q.text)}</td>
+    <td>${escHtml(q.options[q.correct])}</td>
+    <td class="ip-ok">✓</td>
+  </tr>`).join('');
+
+  const errRows = errors.slice(0,5).map(e=>`<tr>
+    <td colspan="3">Строка ${e.ri}: ${escHtml(e.msg)}</td>
+    <td class="ip-err">✗</td>
+  </tr>`).join('');
+
+  el.innerHTML = `
+    <div class="import-stats">${statsHtml}</div>
+    ${parsed.length ? `<div class="import-preview"><table>
+      <thead><tr><th>Должность</th><th>Вопрос</th><th>Правильный ответ</th><th>Статус</th></tr></thead>
+      <tbody>${previewRows}${parsed.length>5?`<tr><td colspan="4" style="color:var(--muted);font-style:italic;padding:8px 10px">...и ещё ${parsed.length-5} вопросов</td></tr>`:''}</tbody>
+    </table></div>` : ''}
+    ${errors.length ? `<div class="import-preview"><table>
+      <thead><tr><th colspan="3">Ошибки</th><th>Статус</th></tr></thead>
+      <tbody>${errRows}${errors.length>5?`<tr><td colspan="4" style="color:var(--muted);font-style:italic;padding:8px 10px">...и ещё ${errors.length-5} ошибок</td></tr>`:''}</tbody>
+    </table></div>` : ''}
+    ${parsed.length ? `<div class="btn-actions" style="justify-content:flex-end;margin-top:8px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;cursor:pointer">
+        <input type="checkbox" id="import-replace" style="width:16px;height:16px;accent-color:var(--accent)">
+        Заменить существующие вопросы (иначе добавить к текущим)
+      </label>
+      <button class="btn btn-primary" onclick="applyImport(${JSON.stringify(parsed).replace(/"/g,'&quot;')})">Применить импорт (${parsed.length} вопросов)</button>
+    </div>` : '<div style="padding:8px 0;font-size:13px;color:var(--error);font-weight:600">Нет валидных вопросов для импорта.</div>'}
+  `;
+
+  // Store parsed for apply
+  window._importParsed = parsed;
+}
+
+async function applyImport(parsed){
+  const replace = document.getElementById('import-replace')?.checked;
+  // Use window._importParsed if available (avoids huge inline JSON)
+  const data = window._importParsed || parsed;
+  if(!data || !data.length) return;
+
+  if(replace){
+    // Clear affected positions
+    const affected = [...new Set(data.map(q=>q.posId))];
+    affected.forEach(id => { appQuestions[id] = []; });
+  }
+
+  data.forEach(q => {
+    if(!appQuestions[q.posId]) appQuestions[q.posId] = [];
+    appQuestions[q.posId].push({text:q.text, options:q.options, correct:q.correct});
+  });
+
+  showToast('Сохраняем...');
+  const ok = await saveQuestions();
+  if(ok !== false){
+    showToast(`Импортировано ${data.length} вопросов ✓`);
+    window._importParsed = null;
+    renderAdmin();
+  } else {
+    showToast('Ошибка сохранения в базу данных');
+  }
+}
+
+function downloadTemplate(){
+  // Build a template XLSX with header + 3 example rows
+  const rows = [
+    ['Должность','Вопрос','Вариант А','Вариант Б','Вариант В','Вариант Г','Правильный (А/Б/В/Г)'],
+    ['Начальник','Пример вопроса для начальника?','Ответ 1','Ответ 2','Ответ 3','Ответ 4','А'],
+    ['Инспектор','Пример вопроса для инспектора?','Вариант А','Вариант Б','Вариант В','Вариант Г','В'],
+    ['Дознаватель','Пример вопроса для дознавателя?','Первый','Второй','Третий','Четвёртый','Б'],
+  ];
+  // Use the same OOXML builder pattern
+  const esc2 = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const cl = n => { let s=''; n++; while(n>0){s=String.fromCharCode(65+(n-1)%26)+s;n=Math.floor((n-1)/26);}return s; };
+  const strs=[]; const si2=v=>{const k=String(v);if(!strs.includes(k))strs.push(k);return strs.indexOf(k);};
+  let cells='';
+  rows.forEach((row,ri)=>{
+    let r='';
+    row.forEach((val,ci)=>{r+=`<c r="${cl(ci)}${ri+1}" t="s"><v>${si2(val)}</v></c>`;});
+    cells+=`<row r="${ri+1}">${r}</row>`;
+  });
+  const cols=[14,40,18,18,18,18,20].map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('');
+  const shXml=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols>${cols}</cols><sheetData>${cells}</sheetData></worksheet>`;
+  const ssXml=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${strs.length}" uniqueCount="${strs.length}">${strs.map(s=>`<si><t xml:space="preserve">${esc2(s)}</t></si>`).join('')}</sst>`;
+  const wbX=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Вопросы" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const wbR=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>`;
+  const rR=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+  const ct=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>`;
+
+  const enc2=s=>new TextEncoder().encode(s);
+  const doZip=()=>{
+    const zip={'[Content_Types].xml':enc2(ct),'_rels/.rels':enc2(rR),'xl/workbook.xml':enc2(wbX),'xl/_rels/workbook.xml.rels':enc2(wbR),'xl/worksheets/sheet1.xml':enc2(shXml),'xl/sharedStrings.xml':enc2(ssXml)};
+    fflate.zip(zip,{level:6},(err,data)=>{
+      if(err){showToast('Ошибка генерации шаблона');return;}
+      const blob=new Blob([data],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');a.href=url;a.download='shablon_voprosy.xlsx';a.click();
+      setTimeout(()=>URL.revokeObjectURL(url),3000);
+    });
+  };
+  if(window.fflate){doZip();return;}
+  const s=document.createElement('script');
+  s.src='https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js';
+  s.onload=doZip; s.onerror=()=>showToast('Не удалось загрузить библиотеку');
+  document.head.appendChild(s);
 }
 
 function switchAdminPos(id){adminPos=id;renderAdmin();}

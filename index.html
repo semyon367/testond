@@ -533,7 +533,7 @@ input[type=password]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(
   </div>
   <div class="nav-tabs">
     <button class="nav-tab active" id="tab-test" onclick="showPage('test')">Тест</button>
-    <button class="nav-tab" id="tab-results" onclick="showPage('results')">Результаты</button>
+    <button class="nav-tab" id="tab-results" onclick="showPage('results')" style="display:none">Результаты</button>
     <button class="nav-tab" id="tab-admin" onclick="showPage('admin')" style="display:none">Редактор</button>
     <button class="nav-tab" id="tab-admin-lock" onclick="requestAdmin()" title="Вход для администратора">🔒</button>
   </div>
@@ -812,6 +812,7 @@ function checkAdminPwd(){
   if(simpleHash(v)===CORRECT_HASH){
     adminUnlocked=true;closeAdminModal();
     document.getElementById('tab-admin').style.display='inline-flex';
+    document.getElementById('tab-results').style.display='inline-flex';
     document.getElementById('tab-admin-lock').style.display='none';
     showPage('admin');showToast('Добро пожаловать, администратор ✓');
   }else{
@@ -824,6 +825,7 @@ function checkAdminPwd(){
 function logoutAdmin(){
   adminUnlocked=false;
   document.getElementById('tab-admin').style.display='none';
+  document.getElementById('tab-results').style.display='none';
   document.getElementById('tab-admin-lock').style.display='inline-flex';
   showPage('test');showToast('Сеанс администратора завершён');
 }
@@ -968,15 +970,19 @@ function resetTest(){stopTimer();
 // MY RESULTS (non-admin)
 // ══════════════════════════════════
 async function showMyResults(){
-  showPage('results');
+  // Results hidden from users — do nothing
 }
 
 // ══════════════════════════════════
 // ALL RESULTS
 // ══════════════════════════════════
 async function renderAllResults(){
-  const list=await loadResults();
   const el=document.getElementById('all-results-content');
+  if(!adminUnlocked){
+    el.innerHTML=`<div class="empty-state"><div class="empty-icon">🔒</div><p>Доступ только для администратора.</p></div>`;
+    return;
+  }
+  const list=await loadResults();
   if(adminUnlocked){
     // Full table for admin
     if(!list.length){el.innerHTML=`<div class="empty-state"><div class="empty-icon">📂</div><p>Результатов ещё нет.</p></div>`;return;}
@@ -990,19 +996,6 @@ async function renderAllResults(){
       <button class="btn btn-danger" onclick="clearResults()">🗑 Очистить</button>
       <button class="btn btn-green" onclick="downloadXLSX()">⬇ Скачать XLSX</button>
     </div>`;
-  } else {
-    // Show only last test result of current user
-    if(!lastTestEntry){
-      el.innerHTML=`<div class="empty-state"><div class="empty-icon">🔒</div><p>Здесь отображаются ваши результаты после прохождения теста.<br>Полная таблица доступна только администратору.</p></div>`;
-      return;
-    }
-    const r=lastTestEntry;
-    let bc=r.pct>=80?'badge-pass':r.pct>=60?'badge-avg':'badge-fail';
-    el.innerHTML=`<div style="margin-bottom:14px;font-size:13px;color:var(--muted);font-weight:500">Ваш последний результат:</div>
-    <div class="results-table-wrap"><table><thead><tr><th>ФИО</th><th>Отдел</th><th>Должность</th><th>Результат</th><th>Баллы</th><th>Дата</th></tr></thead><tbody>
-    <tr><td><strong>${escHtml(r.fio)}</strong></td><td style="font-size:12px">${escHtml(r.otdel||'')}</td><td>${escHtml(r.position)}</td><td><span class="badge ${bc}">${r.pct}%</span></td><td>${r.correct}/${r.total}</td><td style="color:var(--muted);font-size:12px">${r.date||''} ${r.time||''}</td></tr>
-    </tbody></table></div>
-    <div style="margin-top:16px;padding:14px 18px;background:rgba(28,43,58,.05);border-radius:8px;font-size:13px;color:var(--muted);font-weight:500">🔒 Полная таблица всех результатов доступна только администратору.</div>`;
   }
 }
 

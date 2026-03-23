@@ -1089,79 +1089,110 @@ async function downloadXLSX(){
   if(!list.length){ showToast('Нет данных для экспорта'); return; }
   showToast('Формируем файл...');
   try {
-    const header = ['№','ФИО','Отдел','Должность','Результат (%)','Верных','Всего','Дата и время'];
-    const rows = list.map((r,i) => {
-      const dt = r.created_at ? new Date(r.created_at).toLocaleString('ru',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
-      return [list.length-i, r.fio||'', r.otdel||'', r.position||'', r.pct, r.correct, r.total, dt];
-    });
-
-    // ── Build XLSX (OOXML) without external libs ──
+    // ── Build flat row array ──
+    // Two sheets: "Сводка" (summary) and "Детали" (per-question breakdown)
     const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const colLetter = n => { let s=''; n++; while(n>0){s=String.fromCharCode(65+(n-1)%26)+s; n=Math.floor((n-1)/26);} return s; };
 
-    // Shared strings
-    const strs = []; const strIdx = {};
-    const si = v => { const k=String(v); if(strIdx[k]==null){strIdx[k]=strs.length;strs.push(k);}return strIdx[k]; };
+    const fmtDt = r => r.created_at ? new Date(r.created_at).toLocaleString('ru',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
 
-    // Build cells
-    const allRows = [header, ...rows];
-    let cellsXml = '';
-    allRows.forEach((row, ri) => {
-      let rowXml = '';
-      row.forEach((val, ci) => {
-        const addr = colLetter(ci)+(ri+1);
-        const isNum = ri>0 && typeof val==='number';
-        if(isNum) {
-          rowXml += `<c r="${addr}"><v>${val}</v></c>`;
-        } else {
-          const idx = si(val);
-          rowXml += `<c r="${addr}" t="s"><v>${idx}</v></c>`;
-        }
-      });
-      const bold = ri===0 ? ' customFormat="1"' : '';
-      cellsXml += `<row r="${ri+1}"${bold}>${rowXml}</row>`;
+    // ── Sheet 1: Summary ──
+    const sum_header = ['№','ФИО','Отдел','Должность','Результат (%)','Верных','Всего','Дата и время'];
+    const sum_rows = list.map((r,i) => [list.length-i, r.fio||'', r.otdel||'', r.position||'', r.pct, r.correct, r.total, fmtDt(r)]);
+
+    // ── Sheet 2: Details ──
+    const det_header = ['№ записи','ФИО','Отдел','Должность','Дата','№ вопроса','Вопрос','Ответ участника','Правильный ответ','Итог'];
+    const det_rows = [];
+    list.forEach((r,i) => {
+      const num = list.length - i;
+      const dt = fmtDt(r);
+      if(r.details && r.details.length){
+        r.details.forEach((d, di) => {
+          const res = d.result==='correct' ? 'Верно' : d.result==='timeout' ? 'Не успел ответить' : 'Неверно';
+          const ua = d.result==='timeout' ? '— не успел' : (d.userAnswer||'');
+          det_rows.push([num, r.fio||'', r.otdel||'', r.position||'', dt, di+1, d.q||'', ua, d.correctAnswer||'', res]);
+        });
+      } else {
+        det_rows.push([num, r.fio||'', r.otdel||'', r.position||'', dt, '—','Детали не сохранены','','','']);
+      }
     });
 
-    const colWidths = [4,30,44,16,14,10,10,20].map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('');
+    // ── Build OOXML sheet from rows array ──
+    function buildSheet(headerRow, dataRows, colWidths){
+      const strs = []; const strIdx = {};
+      const si = v => { const k=String(v); if(strIdx[k]==null){strIdx[k]=strs.length;strs.push(k);}return strIdx[k]; };
+      const allRows = [headerRow, ...dataRows];
+      let cellsXml = '';
+      allRows.forEach((row, ri) => {
+        let rowXml = '';
+        row.forEach((val, ci) => {
+          const addr = colLetter(ci)+(ri+1);
+          const isNum = ri>0 && typeof val==='number';
+          if(isNum){
+            rowXml += `<c r="${addr}"><v>${val}</v></c>`;
+          } else {
+            rowXml += `<c r="${addr}" t="s"><v>${si(val)}</v></c>`;
+          }
+        });
+        cellsXml += `<row r="${ri+1}">${rowXml}</row>`;
+      });
+      const cols = colWidths.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('');
+      const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetFormatPr defaultRowHeight="15"/><cols>${cols}</cols><sheetData>${cellsXml}</sheetData></worksheet>`;
+      const ssXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${strs.length}" uniqueCount="${strs.length}">${strs.map(s=>`<si><t xml:space="preserve">${esc(s)}</t></si>`).join('')}</sst>`;
+      return {sheetXml, ssXml, strs};
+    }
 
-    const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<sheetFormatPr defaultRowHeight="15"/>
-<cols>${colWidths}</cols>
-<sheetData>${cellsXml}</sheetData>
-</worksheet>`;
+    const sheet1 = buildSheet(sum_header, sum_rows, [4,28,38,16,13,9,9,18]);
+    const sheet2 = buildSheet(det_header, det_rows, [9,24,32,14,16,8,50,28,28,14]);
 
-    const ssXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${strs.length}" uniqueCount="${strs.length}">
-${strs.map(s=>`<si><t xml:space="preserve">${esc(s)}</t></si>`).join('')}
-</sst>`;
+    // Workbook with 2 sheets, each has its own sharedStrings
+    // For simplicity: merge both into one sharedStrings (reindex sheet2 with offset)
+    const allStrs = [...sheet1.strs];
+    const strOffset = allStrs.length;
+    sheet2.strs.forEach(s => allStrs.push(s));
 
-    const wbXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-<sheets><sheet name="Результаты" sheetId="1" r:id="rId1"/></sheets>
-</workbook>`;
+    // Re-encode sheet2 cells with offset
+    const sheet2XmlFixed = sheet2.sheetXml.replace(/<v>(\d+)<\/v><\/c>/g, (m, n, offset, str) => {
+      // Only fix string cells (t="s"), not number cells
+      return m; // we'll do it properly below
+    });
 
-    const wbRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
-</Relationships>`;
+    // Proper offset: rebuild sheet2 cells with corrected string indices
+    function buildSheetWithOffset(headerRow, dataRows, colWidths, offset){
+      const strs = []; const strIdx = {};
+      const si = v => { const k=String(v); if(strIdx[k]==null){strIdx[k]=strs.length;strs.push(k);}return strIdx[k]; };
+      const allRows = [headerRow, ...dataRows];
+      let cellsXml = '';
+      allRows.forEach((row, ri) => {
+        let rowXml = '';
+        row.forEach((val, ci) => {
+          const addr = colLetter(ci)+(ri+1);
+          const isNum = ri>0 && typeof val==='number';
+          if(isNum){
+            rowXml += `<c r="${addr}"><v>${val}</v></c>`;
+          } else {
+            rowXml += `<c r="${addr}" t="s"><v>${si(val)+offset}</v></c>`;
+          }
+        });
+        cellsXml += `<row r="${ri+1}">${rowXml}</row>`;
+      });
+      const cols = colWidths.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('');
+      return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetFormatPr defaultRowHeight="15"/><cols>${cols}</cols><sheetData>${cellsXml}</sheetData></worksheet>`;
+    }
 
-    const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
-</Relationships>`;
+    const s2xml = buildSheetWithOffset(det_header, det_rows, [9,24,32,14,16,8,50,28,28,14], strOffset);
 
-    const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-<Default Extension="xml" ContentType="application/xml"/>
-<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
-<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
-</Types>`;
+    const mergedSS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${allStrs.length}" uniqueCount="${allStrs.length}">${allStrs.map(s=>`<si><t xml:space="preserve">${esc(s)}</t></si>`).join('')}</sst>`;
 
-    // ── Pack into ZIP using fflate (tiny, from CDN) ──
+    const wbXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Сводка" sheetId="1" r:id="rId1"/><sheet name="Детали ответов" sheetId="2" r:id="rId2"/></sheets></workbook>`;
+
+    const wbRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>`;
+
+    const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+
+    const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>`;
+
+    // ── Pack ZIP ──
     await new Promise((res,rej)=>{
       if(window.fflate){res();return;}
       const s=document.createElement('script');
@@ -1176,8 +1207,9 @@ ${strs.map(s=>`<si><t xml:space="preserve">${esc(s)}</t></si>`).join('')}
       '_rels/.rels': enc(rootRels),
       'xl/workbook.xml': enc(wbXml),
       'xl/_rels/workbook.xml.rels': enc(wbRels),
-      'xl/worksheets/sheet1.xml': enc(sheetXml),
-      'xl/sharedStrings.xml': enc(ssXml),
+      'xl/worksheets/sheet1.xml': enc(sheet1.sheetXml),
+      'xl/worksheets/sheet2.xml': enc(s2xml),
+      'xl/sharedStrings.xml': enc(mergedSS),
     };
 
     const zipped = await new Promise((res,rej) => fflate.zip(zip, {level:6}, (err,data) => err?rej(err):res(data)));
@@ -1192,6 +1224,7 @@ ${strs.map(s=>`<si><t xml:space="preserve">${esc(s)}</t></si>`).join('')}
     showToast('Ошибка: ' + e.message);
   }
 }
+
 
 
 // ══════════════════════════════════

@@ -271,6 +271,25 @@ input[type=password]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(
 .timer-num{font-family:'Raleway',sans-serif;font-size:13px;font-weight:800;color:var(--muted);min-width:32px;text-align:right;letter-spacing:.04em;}
 .timer-num.warn{color:var(--warn);}
 .timer-num.danger{color:var(--error);}
+
+/* ── DETAIL PANEL ── */
+.detail-panel{display:none;background:var(--card);border:1px solid var(--border2);border-radius:8px;margin-top:4px;overflow:hidden;}
+.detail-panel.open{display:block;}
+.detail-row{display:grid;grid-template-columns:28px 1fr 160px 160px 60px;gap:0;border-bottom:1px solid var(--border2);font-size:12px;}
+.detail-row:last-child{border-bottom:none;}
+.detail-row.head{background:var(--navy);color:#fff;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;}
+.detail-row>div{padding:9px 10px;line-height:1.4;}
+.detail-row>div:not(:last-child){border-right:1px solid var(--border2);}
+.dr-num{color:var(--muted);font-size:11px;text-align:center;}
+.dr-ok{color:var(--success);font-weight:700;text-align:center;}
+.dr-no{color:var(--error);font-weight:700;text-align:center;}
+.dr-timeout{color:var(--warn);font-weight:700;text-align:center;}
+.expand-btn{background:none;border:none;cursor:pointer;font-size:11px;font-weight:700;color:var(--accent);padding:0;letter-spacing:.04em;white-space:nowrap;}
+.expand-btn:hover{text-decoration:underline;}
+@media(max-width:640px){
+  .detail-row{grid-template-columns:22px 1fr 90px 90px 50px;}
+  .detail-row>div{padding:7px 7px;font-size:11px;}
+}
 </style>
 </head>
 <body>
@@ -789,7 +808,7 @@ async function saveResult(e) {
         'Content-Type': 'application/json',
         'Prefer': 'return=minimal'
       },
-      body: JSON.stringify({fio: e.fio, otdel: e.otdel||'', position: e.position, correct: e.correct, total: e.total, pct: e.pct})
+      body: JSON.stringify({fio: e.fio, otdel: e.otdel||'', position: e.position, correct: e.correct, total: e.total, pct: e.pct, details: e.details||null})
     });
     if (!resp.ok) console.error('saveResult error:', await resp.text());
   } catch(e) { console.error('saveResult error:', e); }
@@ -938,7 +957,19 @@ async function finishTest(){
   const now=new Date();
   const dateStr=now.toLocaleDateString('ru',{day:'2-digit',month:'2-digit',year:'numeric'});
   const timeStr=now.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
-  lastTestEntry={fio:userFio,otdel:userOtdel,position:pos.name,posId:selectedPos,correct,total,pct,date:dateStr,time:timeStr};
+  // Build per-question details
+  const details = testQuestions.map((q,i) => {
+    const ua = answers[i];
+    const timedOut = ua === -1 || ua === undefined;
+    const isCorrect = !timedOut && ua === q.correct;
+    return {
+      q: q.text,
+      userAnswer: timedOut ? null : q.options[ua],
+      correctAnswer: q.options[q.correct],
+      result: timedOut ? 'timeout' : (isCorrect ? 'correct' : 'wrong')
+    };
+  });
+  lastTestEntry={fio:userFio,otdel:userOtdel,position:pos.name,posId:selectedPos,correct,total,pct,date:dateStr,time:timeStr,details};
   await saveResult(lastTestEntry);
   document.getElementById('step-question').style.display='none';
   document.getElementById('q-progress-row').style.display='none';
@@ -989,9 +1020,39 @@ async function renderAllResults(){
     const rows=list.map((r,idx)=>{
       let bc=r.pct>=80?'badge-pass':r.pct>=60?'badge-avg':'badge-fail';
       const dt=r.created_at ? new Date(r.created_at).toLocaleString('ru',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
-      return `<tr><td style="color:var(--muted);font-size:11px">${list.length-idx}</td><td><strong>${escHtml(r.fio)}</strong></td><td style="font-size:12px">${escHtml(r.otdel||'')}</td><td>${escHtml(r.position)}</td><td><span class="badge ${bc}">${r.pct}%</span></td><td>${r.correct}/${r.total}</td><td style="color:var(--muted);white-space:nowrap;font-size:12px">${dt}</td></tr>`;
+      const hasDetails = r.details && r.details.length;
+      const detailRows = hasDetails ? r.details.map((d,di)=>{
+        const icon = d.result==='correct' ? '<span class="dr-ok">✓</span>' : d.result==='timeout' ? '<span class="dr-timeout">⏱</span>' : '<span class="dr-no">✗</span>';
+        const userAns = d.result==='timeout' ? '<span style="color:var(--warn);font-style:italic">Не успел ответить</span>' : escHtml(d.userAnswer||'');
+        return `<div class="detail-row">
+          <div class="dr-num">${di+1}</div>
+          <div>${escHtml(d.q)}</div>
+          <div>${userAns}</div>
+          <div style="color:var(--success)">${escHtml(d.correctAnswer)}</div>
+          <div>${icon}</div>
+        </div>`;
+      }).join('') : '';
+      const pid = 'dp-'+idx;
+      return `<tr>
+        <td style="color:var(--muted);font-size:11px">${list.length-idx}</td>
+        <td><strong>${escHtml(r.fio)}</strong></td>
+        <td style="font-size:12px">${escHtml(r.otdel||'')}</td>
+        <td>${escHtml(r.position)}</td>
+        <td><span class="badge ${bc}">${r.pct}%</span></td>
+        <td>${r.correct}/${r.total}</td>
+        <td style="color:var(--muted);white-space:nowrap;font-size:12px">${dt}</td>
+        <td>${hasDetails?`<button class="expand-btn" onclick="toggleDetail('${pid}',this)">▶ Подробно</button>`:'—'}</td>
+      </tr>
+      <tr><td colspan="8" style="padding:0;border-bottom:1px solid var(--border2)">
+        <div class="detail-panel" id="${pid}">
+          <div class="detail-row head">
+            <div>#</div><div>Вопрос</div><div>Ответ участника</div><div>Правильный ответ</div><div>Итог</div>
+          </div>
+          ${detailRows}
+        </div>
+      </td></tr>`;
     }).join('');
-    el.innerHTML=`<div class="results-table-wrap"><table><thead><tr><th>№</th><th>ФИО</th><th>Отдел</th><th>Должность</th><th>Рез.</th><th>Баллы</th><th>Дата</th></tr></thead><tbody>${rows}</tbody></table></div>
+    el.innerHTML=`<div class="results-table-wrap"><table><thead><tr><th>№</th><th>ФИО</th><th>Отдел</th><th>Должность</th><th>Рез.</th><th>Баллы</th><th>Дата</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="btn-actions" style="margin-top:14px;justify-content:flex-end;gap:10px">
       <button class="btn btn-danger" onclick="clearResults()">🗑 Очистить</button>
       <button class="btn btn-green" onclick="downloadXLSX()">⬇ Скачать XLSX</button>
@@ -1159,6 +1220,13 @@ function renderAdmin(){
     <button class="btn btn-gold" onclick="saveAdminQuestions()">💾 Сохранить</button>
   </div>`;
 }
+function toggleDetail(id, btn){
+  const panel = document.getElementById(id);
+  if(!panel) return;
+  const open = panel.classList.toggle('open');
+  btn.textContent = open ? '▼ Свернуть' : '▶ Подробно';
+}
+
 function switchAdminPos(id){adminPos=id;renderAdmin();}
 function updateQText(qi,v){appQuestions[adminPos][qi].text=v;}
 function updateOpt(qi,oi,v){appQuestions[adminPos][qi].options[oi]=v;}

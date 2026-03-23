@@ -261,6 +261,16 @@ input[type=password]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(
   .opt-text{font-size:12px;}
   .btn{font-size:10px;padding:10px 14px;}
 }
+
+/* ── TIMER ── */
+.timer-wrap{display:flex;align-items:center;gap:10px;margin-bottom:18px;}
+.timer-bar-bg{flex:1;height:6px;background:var(--border);border-radius:99px;overflow:hidden;}
+.timer-bar{height:100%;border-radius:99px;background:var(--success);transition:width 1s linear,background .3s;}
+.timer-bar.warn{background:var(--warn);}
+.timer-bar.danger{background:var(--error);}
+.timer-num{font-family:'Raleway',sans-serif;font-size:13px;font-weight:800;color:var(--muted);min-width:32px;text-align:right;letter-spacing:.04em;}
+.timer-num.warn{color:var(--warn);}
+.timer-num.danger{color:var(--error);}
 </style>
 </head>
 <body>
@@ -591,6 +601,10 @@ input[type=password]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(
         <div class="q-counter" id="q-num-lbl"></div>
         <div class="q-pos-tag" id="q-pos-tag"></div>
       </div>
+      <div class="timer-wrap">
+        <div class="timer-bar-bg"><div class="timer-bar" id="timer-bar" style="width:100%"></div></div>
+        <div class="timer-num" id="timer-num">30с</div>
+      </div>
       <div class="q-text" id="q-text"></div>
       <div class="options" id="q-opts"></div>
       <div class="btn-actions">
@@ -694,6 +708,9 @@ let selectedPos = null;
 let userFio = '', userOtdel = '';
 let currentQ = 0, testQuestions = [], answers = {};
 let adminUnlocked = false;
+let timerInterval = null;
+const TIMER_SECONDS = 30;
+const TEST_QUESTIONS_COUNT = 10;
 let lastTestEntry = null;
 
 // ══════════════════════════════════
@@ -852,10 +869,13 @@ function goToTest(){
   const qs=appQuestions[selectedPos]||[];
   if(!qs.length){showToast('Нет вопросов для данной должности. Добавьте в Редакторе.');return;}
   userFio=fv;userOtdel=ov;
-  testQuestions=qs;currentQ=0;answers={};lastTestEntry=null;
+  // Pick TEST_QUESTIONS_COUNT random questions
+  const shuffled = [...qs].sort(()=>Math.random()-.5);
+  testQuestions = shuffled.slice(0, Math.min(TEST_QUESTIONS_COUNT, shuffled.length));
+  currentQ=0;answers={};lastTestEntry=null;
   document.getElementById('step-start').style.display='none';
   document.getElementById('step-question').style.display='block';
-  buildDots();renderQ();
+  buildDots();renderQ();startTimer();
 }
 
 // ══════════════════════════════════
@@ -877,10 +897,10 @@ function renderQ(){
   document.getElementById('q-num-lbl').textContent=`Вопрос ${currentQ+1} из ${testQuestions.length}`;
   document.getElementById('q-pos-tag').textContent=pos.name;
   document.getElementById('q-text').textContent=q.text;
+  // No correct/wrong highlighting — just show chosen (neutral) or disabled
   document.getElementById('q-opts').innerHTML=q.options.map((opt,i)=>{
     let cls='opt'+(answered?' disabled':'');
-    if(answered){if(i===q.correct)cls+=' correct';else if(answers[currentQ]===i)cls+=' wrong';}
-    else if(answers[currentQ]===i)cls+=' chosen';
+    if(answers[currentQ]===i) cls+=' chosen';
     return `<div class="${cls}"${answered?'':` onclick="pickAns(${i})"`}><div class="opt-letter">${letters[i]}</div><div class="opt-text">${escHtml(opt)}</div></div>`;
   }).join('');
   const nb=document.getElementById('q-next-btn');
@@ -888,15 +908,28 @@ function renderQ(){
   nb.textContent=currentQ===testQuestions.length-1?'Завершить тест ✓':'Далее →';
   document.getElementById('q-prev-btn').style.visibility=currentQ===0?'hidden':'visible';
 }
-function pickAns(i){answers[currentQ]=i;renderQ();}
+function pickAns(i){answers[currentQ]=i;stopTimer();renderQ();}
 function prevQ(){if(currentQ>0){currentQ--;renderQ();}}
-function nextQ(){if(currentQ<testQuestions.length-1){currentQ++;renderQ();}else finishTest();}
+function nextQ(){
+  if(answers[currentQ]===undefined){
+    // Time ran out — mark as skipped (null means unanswered)
+    answers[currentQ]=-1;
+  }
+  if(currentQ<testQuestions.length-1){
+    currentQ++;stopTimer();renderQ();startTimer();
+  } else {
+    stopTimer();finishTest();
+  }
+}
 
 // ══════════════════════════════════
 // FINISH TEST
 // ══════════════════════════════════
 async function finishTest(){
-  const total=testQuestions.length;let correct=0;
+  stopTimer();
+  const total=testQuestions.length;
+  let correct=0;
+  // answers[i]===-1 means timed out (unanswered), counts as wrong
   testQuestions.forEach((q,i)=>{if(answers[i]===q.correct)correct++;});
   const pct=Math.round(correct/total*100);
   const pos=POSITIONS.find(p=>p.id===selectedPos);
@@ -905,38 +938,22 @@ async function finishTest(){
   const timeStr=now.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
   lastTestEntry={fio:userFio,otdel:userOtdel,position:pos.name,posId:selectedPos,correct,total,pct,date:dateStr,time:timeStr};
   await saveResult(lastTestEntry);
-  let band='pass',icon='🏅',verdict='Отличный результат';
-  if(pct<60){band='fail';icon='❌';verdict='Требуется подготовка';}
-  else if(pct<80){band='avg';icon='⚠️';verdict='Удовлетворительно';}
-  const letters=['А','Б','В','Г'];
-  const reviewHtml=testQuestions.map((q,i)=>{
-    const ua=answers[i];const ok=ua===q.correct;
-    return `<div class="review-block"><div class="review-head"><div class="review-num">${i+1}</div><div class="review-q-text">${escHtml(q.text)}</div><div class="review-status ${ok?'rs-ok':'rs-bad'}">${ok?'✓':'✗'}</div></div><div class="review-body">${!ok?`<div class="review-ans ra-wrong">✗ Ваш ответ: ${letters[ua]}. ${escHtml(q.options[ua])}</div>`:''}<div class="review-ans ra-correct">✓ ${ok?'Правильно':'Правильный ответ'}: ${letters[q.correct]}. ${escHtml(q.options[q.correct])}</div></div></div>`;
-  }).join('');
   document.getElementById('step-question').style.display='none';
   document.getElementById('q-progress-row').style.display='none';
   document.getElementById('step-results').style.display='block';
-  document.getElementById('step-results').innerHTML=`<div class="card">
-    <div class="sec-label">Итоги тестирования</div>
-    <div class="card-title">${escHtml(userFio)}</div>
-    <div class="result-band ${band}"><div class="result-icon">${icon}</div><div class="result-info"><h2>${verdict}</h2><p>${escHtml(pos.name)} · ${escHtml(userOtdel)} · ${dateStr}, ${timeStr}</p></div></div>
-    <div class="stats-grid">
-      <div class="stat-box"><div class="stat-val" style="color:var(--accent)">${pct}%</div><div class="stat-label">Результат</div></div>
-      <div class="stat-box"><div class="stat-val" style="color:var(--success)">${correct}</div><div class="stat-label">Верных</div></div>
-      <div class="stat-box"><div class="stat-val" style="color:var(--error)">${total-correct}</div><div class="stat-label">Неверных</div></div>
-      <div class="stat-box"><div class="stat-val">${total}</div><div class="stat-label">Всего</div></div>
-    </div>
-    <hr class="divider">
-    <div class="sec-label" style="margin-bottom:10px">Разбор ответов</div>
-    ${reviewHtml}
-    <div class="btn-actions" style="margin-top:22px">
-      <button class="btn btn-ghost" onclick="showMyResults()">📋 Мои результаты</button>
-      <button class="btn btn-primary" onclick="resetTest()">Новый тест</button>
-    </div>
+  // User sees only a "thank you" screen — no score, no correct answers
+  document.getElementById('step-results').innerHTML=`<div class="card" style="text-align:center;padding:56px 40px;">
+    <div style="font-size:56px;margin-bottom:20px">✅</div>
+    <div class="sec-label" style="text-align:center">Тестирование завершено</div>
+    <div class="card-title" style="text-align:center;margin-bottom:12px">${escHtml(userFio)}</div>
+    <p style="color:var(--muted);font-size:14px;font-weight:500;margin-bottom:8px">${escHtml(pos.name)} · ${escHtml(userOtdel)}</p>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:36px">${dateStr}, ${timeStr}</p>
+    <p style="font-size:15px;font-weight:600;color:var(--ink2);margin-bottom:32px">Ваши ответы записаны.<br>Результаты сообщит руководитель.</p>
+    <button class="btn btn-primary" onclick="resetTest()" style="margin:0 auto">Пройти ещё раз</button>
   </div>`;
 }
 
-function resetTest(){
+function resetTest(){stopTimer();
   selectedPos=null;userFio='';userOtdel='';answers={};currentQ=0;testQuestions=[];
   document.getElementById('fio').value='';
   document.getElementById('otdel').value='';
@@ -1186,6 +1203,45 @@ function showToast(msg){const t=document.getElementById('toast');t.textContent=m
 // INIT
 // ══════════════════════════════════
 (async()=>{await loadQuestions();renderPositions();})();
+// ══════════════════════════════════
+// TIMER
+// ══════════════════════════════════
+function startTimer(){
+  stopTimer();
+  let remaining = TIMER_SECONDS;
+  updateTimerUI(remaining);
+  timerInterval = setInterval(()=>{
+    remaining--;
+    updateTimerUI(remaining);
+    if(remaining<=0){
+      stopTimer();
+      // Auto-advance: mark unanswered and move on
+      if(answers[currentQ]===undefined) answers[currentQ]=-1;
+      document.getElementById('q-next-btn').disabled=false;
+      // Brief pause then auto-next
+      setTimeout(()=>nextQ(), 400);
+    }
+  }, 1000);
+}
+
+function stopTimer(){
+  if(timerInterval){clearInterval(timerInterval);timerInterval=null;}
+}
+
+function updateTimerUI(remaining){
+  const bar = document.getElementById('timer-bar');
+  const num = document.getElementById('timer-num');
+  if(!bar||!num) return;
+  const pct = (remaining / TIMER_SECONDS) * 100;
+  bar.style.width = pct + '%';
+  num.textContent = remaining + 'с';
+  const warn = remaining <= 10;
+  const danger = remaining <= 5;
+  bar.className = 'timer-bar' + (danger?' danger':warn?' warn':'');
+  num.className = 'timer-num' + (danger?' danger':warn?' warn':'');
+}
+
+
 </script>
 </body>
 </html>

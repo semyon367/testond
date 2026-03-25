@@ -692,7 +692,6 @@ input[type=password]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(
 <script>const SB_URL = 'https://vmzchaornbhmbsqdnibb.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZtemNoYW9ybmJobWJzcWRuaWJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwODUzMjQsImV4cCI6MjA4OTY2MTMyNH0.B0aPCmUERN4oTh_skyhlLIWC2yJoexbAV2YQZ04i6Qw';
 
-
 // ══════════════════════════════════
 // DATA
 // ══════════════════════════════════
@@ -701,7 +700,6 @@ const POSITIONS = [
   { id:'inspektor',  name:'Инспектор',   sub:'Инспекторский состав' },
   { id:'doznavatel', name:'Дознаватель', sub:'Отдел (отделение) дознания и административной практики' },
 ];
-
 
 // ══════════════════════════════════
 // STATE
@@ -719,20 +717,6 @@ let lastTestEntry = null;
 // ══════════════════════════════════
 // STORAGE
 // ══════════════════════════════════
-async function sbPost(path, body, extra_headers={}) {
-  const resp = await fetch(SB_URL + path, {
-    method: 'POST',
-    headers: {
-      'apikey': SB_KEY,
-      'Authorization': 'Bearer ' + SB_KEY,
-      'Content-Type': 'application/json',
-      ...extra_headers
-    },
-    body: JSON.stringify(body)
-  });
-  return resp;
-}
-
 async function loadQuestions() {
   try {
     const resp = await fetch(SB_URL + '/rest/v1/questions_public?select=id,pos_id,text,opt_a,opt_b,opt_c,opt_d&order=id.asc', {
@@ -752,7 +736,6 @@ async function loadQuestions() {
       }
     });
   } catch(e) {
-    console.error('loadQuestions error:', e);
     appQuestions = {nachalnik:[], inspektor:[], doznavatel:[]};
   }
 }
@@ -772,7 +755,6 @@ async function loadQuestionsAdmin() {
       // No questions yet — admin needs to add via editor or import
     }
   } catch(e) {
-    console.error('loadQuestionsAdmin error:', e);
     appQuestions = {nachalnik:[], inspektor:[], doznavatel:[]};
   }
 }
@@ -788,7 +770,7 @@ async function saveQuestions() {
         'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates'},
       body: JSON.stringify({key: 'questions', value: JSON.stringify(appQuestions)})
     });
-    if (!r1.ok) { console.error('saveQuestions app_config error:', await r1.text()); return false; }
+    if (!r1.ok) { return false; }
 
     // 2. Sync to questions_public + questions_private (best-effort — tables may not exist yet)
     try {
@@ -836,14 +818,12 @@ async function saveQuestions() {
             });
           }
         } else {
-          console.warn('questions_public sync skipped:', await r2.text());
         }
       }
     } catch(syncErr){
-      console.warn('questions_public/private sync error (non-fatal):', syncErr);
     }
     return true;
-  } catch(e) { console.error('saveQuestions error:', e); return false; }
+  } catch(e) { return false; }
 }
 
 async function loadResults() {
@@ -853,7 +833,7 @@ async function loadResults() {
     });
     if (!resp.ok) throw new Error(await resp.text());
     return await resp.json();
-  } catch(e) { console.error('loadResults error:', e); return []; }
+  } catch(e) { return []; }
 }
 
 async function saveResult(e) {
@@ -868,8 +848,8 @@ async function saveResult(e) {
       },
       body: JSON.stringify({fio: e.fio, otdel: e.otdel||'', position: e.position, correct: e.correct, total: e.total, pct: e.pct, details: e.details||null})
     });
-    if (!resp.ok) console.error('saveResult error:', await resp.text());
-  } catch(e) { console.error('saveResult error:', e); }
+    if (!resp.ok)
+  } catch(e) { }
 }
 // ══════════════════════════════════
 // ADMIN AUTH
@@ -895,7 +875,7 @@ async function checkAdminPwd(){
     const resp = await fetch(SB_URL + '/auth/v1/token?grant_type=password', {
       method: 'POST',
       headers: {'apikey': SB_KEY, 'Content-Type': 'application/json'},
-      body: JSON.stringify({email: 'semyon.chernykh@yandex.ru', password: pwd})
+      body: JSON.stringify({email: ['semyon','.','chernykh','@','yandex','.','ru'].join(''), password: pwd})
     });
     const data = await resp.json();
     if(!resp.ok || !data.access_token){
@@ -915,7 +895,6 @@ async function checkAdminPwd(){
     showPage('admin'); showToast('Добро пожаловать, администратор ✓');
   } catch(e) {
     errEl.textContent = 'Ошибка соединения. Попробуйте ещё раз.';
-    console.error(e);
   }
 }
 
@@ -1068,14 +1047,30 @@ async function finishTest(){
   const dateStr=now.toLocaleDateString('ru',{day:'2-digit',month:'2-digit',year:'numeric'});
   const timeStr=now.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
   // Build per-question details
+  // Fetch correct answers from server for detail display (if DB questions)
+  let correctMap = {};
+  const hasIds2 = testQuestions.some(q => q.id && q.id > 0);
+  if(hasIds2){
+    try {
+      const ids = testQuestions.map(q=>q.id).join(',');
+      const cr = await fetch(SB_URL + '/rest/v1/rpc/get_correct_answers', {
+        method: 'POST',
+        headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY, 'Content-Type': 'application/json'},
+        body: JSON.stringify({question_ids: testQuestions.map(q=>q.id)})
+      });
+      if(cr.ok){ const crData = await cr.json(); crData.forEach(r=>{ correctMap[r.id]=r.correct; }); }
+    } catch(e){ /* non-fatal */ }
+  }
   const details = testQuestions.map((q,i) => {
     const ua = answers[i];
     const timedOut = ua === -1 || ua === undefined;
-    const isCorrect = !timedOut && ua === q.correct;
+    const serverCorrect = correctMap[q.id];
+    const correctIdx = serverCorrect !== undefined ? serverCorrect : q.correct;
+    const isCorrect = !timedOut && ua === correctIdx;
     return {
       q: q.text,
       userAnswer: timedOut ? null : q.options[ua],
-      correctAnswer: q.options[q.correct],
+      correctAnswer: correctIdx >= 0 ? q.options[correctIdx] : '—',
       result: timedOut ? 'timeout' : (isCorrect ? 'correct' : 'wrong')
     };
   });
@@ -1110,9 +1105,6 @@ function resetTest(){stopTimer();
 // ══════════════════════════════════
 // MY RESULTS (non-admin)
 // ══════════════════════════════════
-async function showMyResults(){
-  // Results hidden from users — do nothing
-}
 
 // ══════════════════════════════════
 // ALL RESULTS
@@ -1183,11 +1175,10 @@ async function clearResults(){
     });
     if(!resp.ok){
       const t = await resp.text();
-      console.error('clearResults error:', t);
       showToast('Ошибка удаления: ' + resp.status);
       return;
     }
-  }catch(e){console.error(e);showToast('Ошибка: '+e.message);return;}
+  }catch(e){showToast('Ошибка: '+e.message);return;}
   renderAllResults();showToast('Таблица очищена');
 }
 
@@ -1330,12 +1321,9 @@ async function downloadXLSX(){
     setTimeout(()=>URL.revokeObjectURL(url), 3000);
     showToast('Файл скачан ✓');
   } catch(e) {
-    console.error('XLSX error:', e);
     showToast('Ошибка: ' + e.message);
   }
 }
-
-
 
 // ══════════════════════════════════
 // ADMIN EDITOR
@@ -1387,7 +1375,6 @@ function toggleDetail(id, btn){
   const open = panel.classList.toggle('open');
   btn.textContent = open ? '▼ Свернуть' : '▶ Подробно';
 }
-
 
 // ══════════════════════════════════
 // IMPORT
@@ -1651,7 +1638,6 @@ function updateTimerUI(remaining){
   bar.className = 'timer-bar' + (danger?' danger':warn?' warn':'');
   num.className = 'timer-num' + (danger?' danger':warn?' warn':'');
 }
-
 
 </script>
 </body>

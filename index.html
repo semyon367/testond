@@ -769,9 +769,43 @@ async function sbPost(path, body, extra_headers={}) {
 }
 
 async function loadQuestions() {
+  // Load from questions_public — no correct field exposed to browser for test takers
+  // Admin loads full data from app_config after login
+  try {
+    const resp = await fetch(SB_URL + '/rest/v1/questions_public?select=id,pos_id,text,opt_a,opt_b,opt_c,opt_d&order=id.asc', {
+      headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const rows = await resp.json();
+    // Rebuild appQuestions structure WITHOUT correct field
+    appQuestions = {nachalnik:[], inspektor:[], doznavatel:[]};
+    rows.forEach(r => {
+      if(appQuestions[r.pos_id] !== undefined){
+        appQuestions[r.pos_id].push({
+          id: r.id,
+          text: r.text,
+          options: [r.opt_a, r.opt_b, r.opt_c, r.opt_d],
+          correct: -1 // hidden — will be checked server-side
+        });
+      }
+    });
+    // If no questions in DB yet, use defaults (first run)
+    const total = Object.values(appQuestions).reduce((s,a)=>s+a.length,0);
+    if(total === 0){
+      appQuestions = JSON.parse(JSON.stringify(DEFAULT_QUESTIONS));
+    }
+  } catch(e) {
+    console.error('loadQuestions error:', e);
+    appQuestions = JSON.parse(JSON.stringify(DEFAULT_QUESTIONS));
+  }
+}
+
+async function loadQuestionsAdmin() {
+  // Admin: load full questions including correct answers from app_config
+  const token = sbAuthToken || SB_KEY;
   try {
     const resp = await fetch(SB_URL + '/rest/v1/app_config?key=eq.questions&select=value', {
-      headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}
+      headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + token}
     });
     if (!resp.ok) throw new Error(await resp.text());
     const data = await resp.json();
@@ -782,24 +816,73 @@ async function loadQuestions() {
       await saveQuestions();
     }
   } catch(e) {
-    console.error('loadQuestions error:', e);
-    appQuestions = JSON.parse(JSON.stringify(DEFAULT_QUESTIONS));
+    console.error('loadQuestionsAdmin error:', e);
   }
 }
 
 async function saveQuestions() {
+  const token = sbAuthToken;
+  if(!token){ showToast('Требуется вход администратора'); return false; }
   try {
-    const resp = await fetch(SB_URL + '/rest/v1/app_config', {
+    // 1. Save full data (with correct) to app_config for admin editing
+    const r1 = await fetch(SB_URL + '/rest/v1/app_config', {
       method: 'POST',
-      headers: {
-        'apikey': SB_KEY,
-        'Authorization': 'Bearer ' + SB_KEY,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
+      headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + token,
+        'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates'},
       body: JSON.stringify({key: 'questions', value: JSON.stringify(appQuestions)})
     });
-    if (!resp.ok) { console.error('saveQuestions error:', await resp.text()); return false; }
+    if (!r1.ok) { console.error('saveQuestions app_config error:', await r1.text()); return false; }
+
+    // 2. Sync to questions_public + questions_private
+    // Delete existing and re-insert
+    await fetch(SB_URL + '/rest/v1/questions_private?id=gt.0', {
+      method: 'DELETE',
+      headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + token}
+    });
+    await fetch(SB_URL + '/rest/v1/questions_public?id=gt.0', {
+      method: 'DELETE',
+      headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + token}
+    });
+
+    // Insert all questions
+    const pubRows = [], privRows = [];
+    let order = 0;
+    for(const [posId, qs] of Object.entries(appQuestions)){
+      for(const q of qs){
+        pubRows.push({pos_id: posId, text: q.text,
+          opt_a: q.options[0], opt_b: q.options[1],
+          opt_c: q.options[2], opt_d: q.options[3],
+          sort_order: order++});
+      }
+    }
+    if(pubRows.length){
+      const r2 = await fetch(SB_URL + '/rest/v1/questions_public', {
+        method: 'POST',
+        headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + token,
+          'Content-Type': 'application/json', 'Prefer': 'return=representation'},
+        body: JSON.stringify(pubRows)
+      });
+      if(!r2.ok){ console.error('insert questions_public error:', await r2.text()); return false; }
+      const inserted = await r2.json();
+      // Map inserted IDs back by order
+      inserted.forEach((row, i) => {
+        // Find correct answer for this row by matching pos_id + text
+        const posQs = appQuestions[row.pos_id] || [];
+        const match = posQs.find(q => q.text === row.text);
+        if(match !== undefined && match.correct >= 0){
+          privRows.push({id: row.id, correct: match.correct});
+        }
+      });
+      if(privRows.length){
+        const r3 = await fetch(SB_URL + '/rest/v1/questions_private', {
+          method: 'POST',
+          headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + token,
+            'Content-Type': 'application/json', 'Prefer': 'return=minimal'},
+          body: JSON.stringify(privRows)
+        });
+        if(!r3.ok){ console.error('insert questions_private error:', await r3.text()); }
+      }
+    }
     return true;
   } catch(e) { console.error('saveQuestions error:', e); return false; }
 }
@@ -835,8 +918,9 @@ async function saveResult(e) {
 // ══════════════════════════════════
 // ADMIN AUTH
 // ══════════════════════════════════
-function simpleHash(s){let h=0x811c9dc5;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=(h*0x01000193)>>>0;}return h.toString(16).padStart(8,'0');}
-const CORRECT_HASH=simpleHash('UNDiPRredaktortestov2026!');
+// ── Supabase Auth ──
+let sbAuthToken = null;
+
 function requestAdmin(){
   if(adminUnlocked){showPage('admin');return;}
   document.getElementById('admin-pwd-input').value='';
@@ -845,29 +929,56 @@ function requestAdmin(){
   setTimeout(()=>document.getElementById('admin-pwd-input').focus(),100);
 }
 function closeAdminModal(){document.getElementById('admin-modal').classList.add('hidden');}
-function checkAdminPwd(){
-  const v=document.getElementById('admin-pwd-input').value;
-  if(simpleHash(v)===CORRECT_HASH){
-    adminUnlocked=true;closeAdminModal();
+
+async function checkAdminPwd(){
+  const pwd = document.getElementById('admin-pwd-input').value.trim();
+  const errEl = document.getElementById('admin-pwd-err');
+  if(!pwd){ errEl.textContent='Введите пароль.'; return; }
+  errEl.textContent = 'Проверяем...';
+  try {
+    const resp = await fetch(SB_URL + '/auth/v1/token?grant_type=password', {
+      method: 'POST',
+      headers: {'apikey': SB_KEY, 'Content-Type': 'application/json'},
+      body: JSON.stringify({email: 'semyon.chernykh@yandex.ru', password: pwd})
+    });
+    const data = await resp.json();
+    if(!resp.ok || !data.access_token){
+      errEl.textContent = 'Неверный пароль. Попробуйте ещё раз.';
+      document.getElementById('admin-pwd-input').value='';
+      document.getElementById('admin-pwd-input').focus();
+      const b=document.querySelector('.modal-box');
+      b.style.animation='none'; b.offsetHeight; b.style.animation='shake .3s ease';
+      return;
+    }
+    sbAuthToken = data.access_token;
+    adminUnlocked = true;
+    closeAdminModal();
     document.getElementById('tab-admin').style.display='inline-flex';
     document.getElementById('tab-results').style.display='inline-flex';
     document.getElementById('tab-admin-lock').style.display='none';
-    showPage('admin');showToast('Добро пожаловать, администратор ✓');
-  }else{
-    document.getElementById('admin-pwd-err').textContent='Неверный пароль. Попробуйте ещё раз.';
-    document.getElementById('admin-pwd-input').value='';
-    document.getElementById('admin-pwd-input').focus();
-    const b=document.querySelector('.modal-box');b.style.animation='none';b.offsetHeight;b.style.animation='shake .3s ease';
+    showPage('admin'); showToast('Добро пожаловать, администратор ✓');
+  } catch(e) {
+    errEl.textContent = 'Ошибка соединения. Попробуйте ещё раз.';
+    console.error(e);
   }
 }
-function logoutAdmin(){
-  adminUnlocked=false;
+
+async function logoutAdmin(){
+  if(sbAuthToken){
+    try {
+      await fetch(SB_URL + '/auth/v1/logout', {
+        method: 'POST',
+        headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + sbAuthToken}
+      });
+    } catch(e){}
+    sbAuthToken = null;
+  }
+  adminUnlocked = false;
   document.getElementById('tab-admin').style.display='none';
   document.getElementById('tab-results').style.display='none';
   document.getElementById('tab-admin-lock').style.display='inline-flex';
-  showPage('test');showToast('Сеанс администратора завершён');
+  showPage('test'); showToast('Сеанс администратора завершён');
 }
-
 // ══════════════════════════════════
 // PAGE ROUTING
 // ══════════════════════════════════
@@ -969,8 +1080,32 @@ async function finishTest(){
   stopTimer();
   const total=testQuestions.length;
   let correct=0;
-  // answers[i]===-1 means timed out (unanswered), counts as wrong
-  testQuestions.forEach((q,i)=>{if(answers[i]===q.correct)correct++;});
+  // Build submissions for server-side checking if questions have real IDs
+  const hasIds = testQuestions.some(q => q.id && q.id > 0);
+  if(hasIds){
+    try {
+      const submissions = testQuestions.map((q,i) => ({
+        id: q.id,
+        answer: (answers[i] === -1 || answers[i] === undefined) ? -1 : answers[i]
+      }));
+      const resp = await fetch(SB_URL + '/rest/v1/rpc/check_answers', {
+        method: 'POST',
+        headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY,
+          'Content-Type': 'application/json'},
+        body: JSON.stringify({submissions: submissions})
+      });
+      if(resp.ok){ correct = await resp.json(); }
+      else {
+        // Fallback: client-side (questions loaded from DEFAULT_QUESTIONS have correct field)
+        testQuestions.forEach((q,i)=>{if(answers[i]===q.correct)correct++;});
+      }
+    } catch(e){
+      testQuestions.forEach((q,i)=>{if(answers[i]===q.correct)correct++;});
+    }
+  } else {
+    // Default questions (no DB ids) — check client-side
+    testQuestions.forEach((q,i)=>{if(answers[i]===q.correct)correct++;});
+  }
   const pct=Math.round(correct/total*100);
   const pos=POSITIONS.find(p=>p.id===selectedPos);
   const now=new Date();
@@ -1250,8 +1385,10 @@ async function downloadXLSX(){
 // ADMIN EDITOR
 // ══════════════════════════════════
 let adminPos='nachalnik';
-function renderAdmin(){
+async function renderAdmin(){
   const el=document.getElementById('admin-content');
+  // Load full questions including correct answers for admin editing
+  await loadQuestionsAdmin();
   const tabs=POSITIONS.map(p=>`<button class="btn ${adminPos===p.id?'btn-primary':'btn-ghost'}" style="padding:8px 16px;font-size:11px" onclick="switchAdminPos('${p.id}')">${p.name}</button>`).join('');
   const qs=appQuestions[adminPos]||[];
   const letters=['А','Б','В','Г'];

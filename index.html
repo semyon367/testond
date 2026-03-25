@@ -689,7 +689,10 @@ input[type=password]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(
 </div>
 <div class="toast" id="toast"></div>
 
-<script>
+<script>const SB_URL = 'https://vmzchaornbhmbsqdnibb.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZtemNoYW9ybmJobWJzcWRuaWJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwODUzMjQsImV4cCI6MjA4OTY2MTMyNH0.B0aPCmUERN4oTh_skyhlLIWC2yJoexbAV2YQZ04i6Qw';
+
+
 // ══════════════════════════════════
 // DATA
 // ══════════════════════════════════
@@ -833,62 +836,61 @@ async function saveQuestions() {
     });
     if (!r1.ok) { console.error('saveQuestions app_config error:', await r1.text()); return false; }
 
-    // 2. Sync to questions_public + questions_private
-    // Delete existing and re-insert
-    await fetch(SB_URL + '/rest/v1/questions_private?id=gt.0', {
-      method: 'DELETE',
-      headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + token}
-    });
-    await fetch(SB_URL + '/rest/v1/questions_public?id=gt.0', {
-      method: 'DELETE',
-      headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + token}
-    });
+    // 2. Sync to questions_public + questions_private (best-effort — tables may not exist yet)
+    try {
+      await fetch(SB_URL + '/rest/v1/questions_private?id=gt.0', {
+        method: 'DELETE',
+        headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + token}
+      });
+      await fetch(SB_URL + '/rest/v1/questions_public?id=gt.0', {
+        method: 'DELETE',
+        headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + token}
+      });
 
-    // Insert all questions
-    const pubRows = [], privRows = [];
-    let order = 0;
-    for(const [posId, qs] of Object.entries(appQuestions)){
-      for(const q of qs){
-        pubRows.push({pos_id: posId, text: q.text,
-          opt_a: q.options[0], opt_b: q.options[1],
-          opt_c: q.options[2], opt_d: q.options[3],
-          sort_order: order++});
-      }
-    }
-    if(pubRows.length){
-      const r2 = await fetch(SB_URL + '/rest/v1/questions_public', {
-        method: 'POST',
-        headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + token,
-          'Content-Type': 'application/json', 'Prefer': 'return=representation'},
-        body: JSON.stringify(pubRows)
-      });
-      if(!r2.ok){ console.error('insert questions_public error:', await r2.text()); return false; }
-      const inserted = await r2.json();
-      // Map inserted IDs back by order
-      inserted.forEach((row, i) => {
-        // Find correct answer for this row by matching pos_id + text
-        const posQs = appQuestions[row.pos_id] || [];
-        const match = posQs.find(q => q.text === row.text);
-        if(match !== undefined && match.correct >= 0){
-          privRows.push({id: row.id, correct: match.correct});
+      const pubRows = [], privRows = [];
+      let order = 0;
+      for(const [posId, qs] of Object.entries(appQuestions)){
+        for(const q of qs){
+          pubRows.push({pos_id: posId, text: q.text,
+            opt_a: q.options[0], opt_b: q.options[1],
+            opt_c: q.options[2], opt_d: q.options[3],
+            sort_order: order++});
         }
-      });
-      if(privRows.length){
-        const r3 = await fetch(SB_URL + '/rest/v1/questions_private', {
+      }
+      if(pubRows.length){
+        const r2 = await fetch(SB_URL + '/rest/v1/questions_public', {
           method: 'POST',
           headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json', 'Prefer': 'return=minimal'},
-          body: JSON.stringify(privRows)
+            'Content-Type': 'application/json', 'Prefer': 'return=representation'},
+          body: JSON.stringify(pubRows)
         });
-        if(!r3.ok){ console.error('insert questions_private error:', await r3.text()); }
+        if(r2.ok){
+          const inserted = await r2.json();
+          inserted.forEach((row) => {
+            const posQs = appQuestions[row.pos_id] || [];
+            const match = posQs.find(q => q.text === row.text);
+            if(match && match.correct >= 0){
+              privRows.push({id: row.id, correct: match.correct});
+            }
+          });
+          if(privRows.length){
+            await fetch(SB_URL + '/rest/v1/questions_private', {
+              method: 'POST',
+              headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json', 'Prefer': 'return=minimal'},
+              body: JSON.stringify(privRows)
+            });
+          }
+        } else {
+          console.warn('questions_public sync skipped:', await r2.text());
+        }
       }
+    } catch(syncErr){
+      console.warn('questions_public/private sync error (non-fatal):', syncErr);
     }
     return true;
   } catch(e) { console.error('saveQuestions error:', e); return false; }
 }
-
-const SB_URL = 'https://vmzchaornbhmbsqdnibb.supabase.co';
-const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZtemNoYW9ybmJobWJzcWRuaWJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwODUzMjQsImV4cCI6MjA4OTY2MTMyNH0.B0aPCmUERN4oTh_skyhlLIWC2yJoexbAV2YQZ04i6Qw';
 
 async function loadResults() {
   try {

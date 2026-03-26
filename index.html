@@ -718,23 +718,43 @@ let lastTestEntry = null;
 // STORAGE
 // ══════════════════════════════════
 async function loadQuestions() {
+  appQuestions = {nachalnik:[], inspektor:[], doznavatel:[]};
   try {
+    // Try secure questions_public table first
     const resp = await fetch(SB_URL + '/rest/v1/questions_public?select=id,pos_id,text,opt_a,opt_b,opt_c,opt_d&order=id.asc', {
       headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}
     });
-    if (!resp.ok) throw new Error(await resp.text());
-    const rows = await resp.json();
-    appQuestions = {nachalnik:[], inspektor:[], doznavatel:[]};
-    rows.forEach(r => {
-      if(appQuestions[r.pos_id] !== undefined){
-        appQuestions[r.pos_id].push({
-          id: r.id,
-          text: r.text,
-          options: [r.opt_a, r.opt_b, r.opt_c, r.opt_d],
-          correct: -1
+    if (resp.ok) {
+      const rows = await resp.json();
+      if (rows.length > 0) {
+        rows.forEach(r => {
+          if(appQuestions[r.pos_id] !== undefined){
+            appQuestions[r.pos_id].push({id:r.id, text:r.text, options:[r.opt_a,r.opt_b,r.opt_c,r.opt_d], correct:-1});
+          }
         });
+        return;
       }
+    }
+    // Fallback: try app_config (questions may not be synced to public table yet)
+    const r2 = await fetch(SB_URL + '/rest/v1/app_config?key=eq.questions&select=value', {
+      headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}
     });
+    if (r2.ok) {
+      const data = await r2.json();
+      if (data && data.length && data[0].value) {
+        const full = JSON.parse(data[0].value);
+        // Strip correct field before storing
+        for (const [posId, qs] of Object.entries(full)) {
+          if (appQuestions[posId] !== undefined) {
+            appQuestions[posId] = qs.map(q => ({
+              text: q.text,
+              options: q.options,
+              correct: -1  // hidden
+            }));
+          }
+        }
+      }
+    }
   } catch(e) {
     appQuestions = {nachalnik:[], inspektor:[], doznavatel:[]};
   }
@@ -894,7 +914,7 @@ async function checkAdminPwd(){
     document.getElementById('tab-admin-lock').style.display='none';
     showPage('admin'); showToast('Добро пожаловать, администратор ✓');
   } catch(e) {
-    errEl.textContent = 'Ошибка соединения. Попробуйте ещё раз.';
+    errEl.textContent = 'Ошибка соединения: ' + (e.message||'неизвестная ошибка');
   }
 }
 

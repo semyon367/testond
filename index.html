@@ -868,7 +868,7 @@ async function saveResult(e) {
       },
       body: JSON.stringify({fio: e.fio, otdel: e.otdel||'', position: e.position, correct: e.correct, total: e.total, pct: e.pct, details: e.details||null})
     });
-    if (!resp.ok)
+    if (!resp.ok) { /* save error — non-fatal */ }
   } catch(e) { }
 }
 // ══════════════════════════════════

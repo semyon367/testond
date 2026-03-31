@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Система тестирования — ОНД и ПР</title>
 <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@300;400;500;600;700;800&family=Lora:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
@@ -309,6 +309,50 @@ input[type=password]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(
 .import-stats{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap;}
 .import-stat{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px 16px;font-size:12px;font-weight:600;}
 .import-stat span{font-size:18px;font-weight:800;display:block;margin-bottom:2px;}
+
+/* ── ANDROID / iOS UNIVERSAL FIXES ── */
+/* Prevent double-tap zoom on buttons and options */
+button, .opt, .pos-option, .nav-tab, .position-card {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Fix 100vh on mobile browsers (address bar issue) */
+.wrap { min-height: -webkit-fill-available; }
+/* Prevent iOS input zoom (font-size must be ≥16px) */
+input[type=text], input[type=password], select, textarea {
+  font-size: 16px !important;
+}
+/* Fix select arrow on Android */
+select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+/* Smooth scrolling */
+html { scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
+/* Fix sticky hover on touch devices — remove hover state after touch */
+@media (hover: none) {
+  .opt:hover:not(.disabled) { border-color: var(--border); background: var(--card); }
+  .pos-option:hover { border-color: var(--border); background: var(--card); }
+  .btn-primary:hover:not(:disabled) { transform: none; }
+  .btn-ghost:hover { border-color: var(--border); color: var(--ink2); }
+  .nav-tab:hover:not(.active) { background: var(--surface); color: var(--ink2); border-color: var(--border); }
+}
+/* Fix positions list not showing on some Android WebViews */
+.positions-list { display: flex !important; flex-direction: column; gap: 10px; }
+.pos-option { display: flex !important; }
+/* Ensure card animations don't cause layout issues on Android */
+@media (max-width: 640px) {
+  .card { animation: none !important; }
+  .site-header { animation: none !important; }
+}
+/* Fix timer bar on older browsers */
+.timer-bar { min-width: 0; }
+/* Safe area insets for iPhone notch */
+.wrap {
+  padding-left: max(20px, env(safe-area-inset-left));
+  padding-right: max(20px, env(safe-area-inset-right));
+  padding-bottom: max(80px, calc(env(safe-area-inset-bottom) + 40px));
+}
 </style>
 </head>
 <body>
@@ -727,6 +771,7 @@ let selectedPos = null;
 let userFio = '', userOtdel = '';
 let currentQ = 0, testQuestions = [], answers = {};
 let adminUnlocked = false;
+let committed = {}; // questions where user pressed Далее
 let timerInterval = null;
 const TIMER_SECONDS = 30;
 const TEST_QUESTIONS_COUNT = 10;
@@ -1008,7 +1053,7 @@ function goToTest(){
   // Shuffle final order
   testQuestions = picked.sort(() => Math.random() - .5);
   userFio=fv;userOtdel=ov;
-  currentQ=0;answers={};lastTestEntry=null;
+  currentQ=0;answers={};committed={};lastTestEntry=null;
   document.getElementById('step-start').style.display='none';
   document.getElementById('step-question').style.display='block';
   buildDots();renderQ();startTimer();
@@ -1033,28 +1078,31 @@ function renderQ(){
   document.getElementById('q-num-lbl').textContent=`Вопрос ${currentQ+1} из ${testQuestions.length}`;
   document.getElementById('q-pos-tag').textContent=pos.name;
   document.getElementById('q-text').textContent=q.text;
-  // No correct/wrong highlighting — just show chosen (neutral) or disabled
+  // After committing (pressing Далее), lock options. Before committing, allow re-selection.
+  const isCommitted = committed[currentQ] === true;
   document.getElementById('q-opts').innerHTML=q.options.map((opt,i)=>{
-    let cls='opt'+(answered?' disabled':'');
+    let cls='opt'+(isCommitted?' disabled':'');
     if(answers[currentQ]===i) cls+=' chosen';
-    return `<div class="${cls}"${answered?'':` onclick="pickAns(${i})"`}><div class="opt-letter">${letters[i]}</div><div class="opt-text">${escHtml(opt)}</div></div>`;
+    const clickHandler = isCommitted ? '' : ` onclick="pickAns(${i})"`;
+    return `<div class="${cls}"${clickHandler}><div class="opt-letter">${letters[i]}</div><div class="opt-text">${escHtml(opt)}</div></div>`;
   }).join('');
   const nb=document.getElementById('q-next-btn');
-  nb.disabled=!answered;
+  nb.disabled=answers[currentQ]===undefined;
   nb.textContent=currentQ===testQuestions.length-1?'Завершить тест ✓':'Далее →';
   document.getElementById('q-prev-btn').style.visibility=currentQ===0?'hidden':'visible';
 }
-function pickAns(i){answers[currentQ]=i;stopTimer();renderQ();}
+function pickAns(i){answers[currentQ]=i;renderQ();}
 function prevQ(){if(currentQ>0){currentQ--;renderQ();}}
 function nextQ(){
   if(answers[currentQ]===undefined){
-    // Time ran out — mark as skipped (null means unanswered)
     answers[currentQ]=-1;
   }
+  committed[currentQ]=true;
+  stopTimer();
   if(currentQ<testQuestions.length-1){
-    currentQ++;stopTimer();renderQ();startTimer();
+    currentQ++;renderQ();startTimer();
   } else {
-    stopTimer();finishTest();
+    finishTest();
   }
 }
 
@@ -1141,7 +1189,7 @@ async function finishTest(){
   </div>`;
 }
 
-function resetTest(){stopTimer();
+function resetTest(){stopTimer();committed={};
   selectedPos=null;userFio='';userOtdel='';answers={};currentQ=0;testQuestions=[];
   document.getElementById('fio').value='';
   document.getElementById('otdel').value='';
@@ -1668,10 +1716,9 @@ function startTimer(){
     updateTimerUI(remaining);
     if(remaining<=0){
       stopTimer();
-      // Auto-advance: mark unanswered and move on
       if(answers[currentQ]===undefined) answers[currentQ]=-1;
+      committed[currentQ]=true;
       document.getElementById('q-next-btn').disabled=false;
-      // Brief pause then auto-next
       setTimeout(()=>nextQ(), 400);
     }
   }, 1000);

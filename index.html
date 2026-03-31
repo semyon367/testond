@@ -701,10 +701,28 @@ const POSITIONS = [
   { id:'doznavatel', name:'Дознаватель', sub:'Отдел (отделение) дознания и административной практики' },
 ];
 
+
+// Sections (отделы) — ключи хранения вопросов
+const SECTIONS = ['oapid','oonpm','go','lk','nto'];
+const SECTION_NAMES = {
+  oapid: 'ОАПиД',
+  oonpm: 'ООНиПМ',
+  go:    'ГО',
+  lk:    'ЛК',
+  nto:   'НТО',
+};
+
+// Квоты вопросов по должностям: {секция: количество}
+const QUOTAS = {
+  nachalnik:  { oapid:2, oonpm:2, go:2, lk:2, nto:2 },   // итого 10
+  inspektor:  { oapid:0, oonpm:3, go:2, lk:2, nto:3 },   // итого 10
+  doznavatel: { oapid:6, oonpm:1, go:1, lk:1, nto:1 },   // итого 10
+};
+
 // ══════════════════════════════════
 // STATE
 // ══════════════════════════════════
-let appQuestions = {};
+let appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[]};
 let selectedPos = null;
 let userFio = '', userOtdel = '';
 let currentQ = 0, testQuestions = [], answers = {};
@@ -718,9 +736,8 @@ let lastTestEntry = null;
 // STORAGE
 // ══════════════════════════════════
 async function loadQuestions() {
-  appQuestions = {nachalnik:[], inspektor:[], doznavatel:[]};
+  appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[]};
   try {
-    // Try secure questions_public table first
     const resp = await fetch(SB_URL + '/rest/v1/questions_public?select=id,pos_id,text,opt_a,opt_b,opt_c,opt_d&order=id.asc', {
       headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}
     });
@@ -735,7 +752,7 @@ async function loadQuestions() {
         return;
       }
     }
-    // Fallback: try app_config (questions may not be synced to public table yet)
+    // Fallback: app_config
     const r2 = await fetch(SB_URL + '/rest/v1/app_config?key=eq.questions&select=value', {
       headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}
     });
@@ -743,20 +760,15 @@ async function loadQuestions() {
       const data = await r2.json();
       if (data && data.length && data[0].value) {
         const full = JSON.parse(data[0].value);
-        // Strip correct field before storing
-        for (const [posId, qs] of Object.entries(full)) {
-          if (appQuestions[posId] !== undefined) {
-            appQuestions[posId] = qs.map(q => ({
-              text: q.text,
-              options: q.options,
-              correct: -1  // hidden
-            }));
+        for (const [sec, qs] of Object.entries(full)) {
+          if (appQuestions[sec] !== undefined) {
+            appQuestions[sec] = qs.map(q => ({text:q.text, options:q.options, correct:-1}));
           }
         }
       }
     }
   } catch(e) {
-    appQuestions = {nachalnik:[], inspektor:[], doznavatel:[]};
+    appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[]};
   }
 }
 
@@ -775,7 +787,7 @@ async function loadQuestionsAdmin() {
       // No questions yet — admin needs to add via editor or import
     }
   } catch(e) {
-    appQuestions = {nachalnik:[], inspektor:[], doznavatel:[]};
+    appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[]};
   }
 }
 
@@ -950,12 +962,16 @@ function showPage(name){
 // RENDER POSITIONS
 // ══════════════════════════════════
 function renderPositions(){
+  const totalQ = SECTIONS.reduce((s,sec)=>s+(appQuestions[sec]||[]).length, 0);
   document.getElementById('pos-list').innerHTML=POSITIONS.map(p=>{
-    const cnt=(appQuestions[p.id]||[]).length;
+    const quota = QUOTAS[p.id]||{};
+    const cnt = Object.entries(quota).reduce((s,[sec,n])=>s+Math.min(n,(appQuestions[sec]||[]).length),0);
+    const needed = Object.values(quota).reduce((s,n)=>s+n,0);
+    const ready = cnt >= needed;
     return `<div class="pos-option${selectedPos===p.id?' selected':''}" data-id="${p.id}" onclick="selectPos('${p.id}')">
       <div class="pos-check">${selectedPos===p.id?'✓':''}</div>
       <div class="pos-info"><div class="pos-name">${p.name}</div><div class="pos-sub">${p.sub}</div></div>
-      <div class="pos-badge">${cnt} вопр.</div>
+      <div class="pos-badge" style="${ready?'':'color:var(--warn)'}">${needed} вопр.</div>
     </div>`;
   }).join('');
 }
@@ -972,12 +988,26 @@ function goToTest(){
   if(!ov){document.getElementById('otdel-err').style.display='block';ok=false;}else document.getElementById('otdel-err').style.display='none';
   if(!selectedPos){document.getElementById('pos-err').style.display='block';ok=false;}
   if(!ok)return;
-  const qs=appQuestions[selectedPos]||[];
-  if(!qs.length){showToast('Нет вопросов для данной должности. Добавьте в Редакторе.');return;}
+  // Build question set by quotas for selected position
+  const quota = QUOTAS[selectedPos] || {};
+  const picked = [];
+  let missing = [];
+  for (const [sec, count] of Object.entries(quota)) {
+    if (!count) continue;
+    const pool = (appQuestions[sec] || []);
+    const shuffled = [...pool].sort(() => Math.random() - .5);
+    const taken = shuffled.slice(0, count);
+    picked.push(...taken);
+    if (taken.length < count) missing.push(`${SECTION_NAMES[sec]}: нужно ${count}, есть ${pool.length}`);
+  }
+  if (picked.length === 0) {
+    showToast('Нет вопросов в базе. Добавьте вопросы в Редакторе.');
+    return;
+  }
+  if (missing.length) showToast('Недостаточно вопросов: ' + missing.join('; '));
+  // Shuffle final order
+  testQuestions = picked.sort(() => Math.random() - .5);
   userFio=fv;userOtdel=ov;
-  // Pick TEST_QUESTIONS_COUNT random questions
-  const shuffled = [...qs].sort(()=>Math.random()-.5);
-  testQuestions = shuffled.slice(0, Math.min(TEST_QUESTIONS_COUNT, shuffled.length));
   currentQ=0;answers={};lastTestEntry=null;
   document.getElementById('step-start').style.display='none';
   document.getElementById('step-question').style.display='block';
@@ -1348,12 +1378,12 @@ async function downloadXLSX(){
 // ══════════════════════════════════
 // ADMIN EDITOR
 // ══════════════════════════════════
-let adminPos='nachalnik';
+let adminPos='oapid';
 async function renderAdmin(){
   const el=document.getElementById('admin-content');
   // Load full questions including correct answers for admin editing
   await loadQuestionsAdmin();
-  const tabs=POSITIONS.map(p=>`<button class="btn ${adminPos===p.id?'btn-primary':'btn-ghost'}" style="padding:8px 16px;font-size:11px" onclick="switchAdminPos('${p.id}')">${p.name}</button>`).join('');
+  const tabs=SECTIONS.map(sec=>`<button class="btn ${adminPos===sec?'btn-primary':'btn-ghost'}" style="padding:8px 16px;font-size:11px" onclick="switchAdminPos('${sec}')">${SECTION_NAMES[sec]} (${(appQuestions[sec]||[]).length})</button>`).join('');
   const qs=appQuestions[adminPos]||[];
   const letters=['А','Б','В','Г'];
   const qBlocks=qs.map((q,qi)=>`<div class="q-edit-block" id="qblock-${qi}">
@@ -1373,7 +1403,7 @@ async function renderAdmin(){
       <input type="file" id="import-file" accept=".xlsx,.xls" onchange="handleImportFile(this.files[0])">
       <div class="import-icon">📥</div>
       <div class="import-title">Нажмите или перетащите XLSX-файл</div>
-      <div class="import-sub">Столбцы: Должность | Вопрос | Вариант А | Вариант Б | Вариант В | Вариант Г | Правильный (А/Б/В/Г)</div>
+      <div class="import-sub">Столбцы: Отдел (ОАПиД/ООНиПМ/ГО/ЛК/НТО) | Вопрос | Вариант А | Вариант Б | Вариант В | Вариант Г | Правильный (А/Б/В/Г)</div>
     </div>
     <div id="import-result"></div>
     <div style="margin-bottom:8px">
@@ -1381,7 +1411,7 @@ async function renderAdmin(){
     </div>
   </div>
   <div class="admin-section"><h3>Должность</h3><div style="display:flex;gap:8px;flex-wrap:wrap">${tabs}</div></div>
-  <div class="admin-section"><h3>${POSITIONS.find(p=>p.id===adminPos).name} — ${qs.length} вопросов</h3>
+  <div class="admin-section"><h3>${SECTION_NAMES[adminPos]||adminPos} — ${qs.length} вопросов</h3>
   ${qBlocks||'<div class="empty-state"><div class="empty-icon">❓</div><p>Нет вопросов. Добавьте первый!</p></div>'}
   <button class="add-q-btn" onclick="addQ()">+ Добавить вопрос</button></div>
   <div class="btn-actions" style="justify-content:flex-end">
@@ -1401,18 +1431,20 @@ function toggleDetail(id, btn){
 // ══════════════════════════════════
 
 // Map position name variants to ids
-const POS_MAP = {
-  'начальник': 'nachalnik',
-  'инспектор': 'inspektor',
-  'дознаватель': 'doznavatel',
+const SEC_MAP = {
+  'оапид':  'oapid', 'oapid':  'oapid', 'оапид.': 'oapid',
+  'оонипм': 'oonpm', 'оонипм.':'oonpm', 'оониим': 'oonpm',
+  'оонпм':  'oonpm', 'oonpm':  'oonpm', 'ооніпм': 'oonpm',
+  'го':     'go',    'go':     'go',
+  'лк':     'lk',    'lk':     'lk',
+  'нто':    'nto',   'nto':    'nto',
 };
 
 function posIdFromName(name){
   if(!name) return null;
   const n = String(name).trim().toLowerCase();
-  if(POS_MAP[n]) return POS_MAP[n];
-  // Partial match
-  for(const [k,v] of Object.entries(POS_MAP)){
+  if(SEC_MAP[n]) return SEC_MAP[n];
+  for(const [k,v] of Object.entries(SEC_MAP)){
     if(n.includes(k)) return v;
   }
   return null;
@@ -1460,7 +1492,7 @@ async function handleImportFile(file){
     const posId = posIdFromName(posName);
     const correctIdx = letterMap[correct.charAt(0)];
 
-    if(!posId)    { errors.push({ri:ri+2, msg:`Неизвестная должность: "${posName}"`}); return; }
+    if(!posId)    { errors.push({ri:ri+2, msg:`Неизвестный отдел: "${posName}". Допустимо: ОАПиД, ООНиПМ, ГО, ЛК, НТО`}); return; }
     if(!qText)    { errors.push({ri:ri+2, msg:'Пустой вопрос'}); return; }
     if(!optA||!optB||!optC||!optD) { errors.push({ri:ri+2, msg:'Не все варианты ответов заполнены'}); return; }
     if(correctIdx===undefined) { errors.push({ri:ri+2, msg:`Неверное значение правильного ответа: "${row[6]}"`}); return; }
@@ -1468,10 +1500,10 @@ async function handleImportFile(file){
     parsed.push({posId, text:qText, options:[optA,optB,optC,optD], correct:correctIdx});
   });
 
-  // Count by position
+  // Count by dept
   const counts = {};
   parsed.forEach(q => { counts[q.posId] = (counts[q.posId]||0)+1; });
-  const posNames = {'nachalnik':'Начальник','inspektor':'Инспектор','doznavatel':'Дознаватель'};
+  const posNames = {oapid:'ОАПиД', oonpm:'ООНиПМ', go:'ГО', lk:'ЛК', nto:'НТО'};
 
   const statsHtml = Object.entries(counts).map(([id,cnt])=>
     `<div class="import-stat"><span style="color:var(--accent)">${cnt}</span>${posNames[id]||id}</div>`
@@ -1520,13 +1552,15 @@ async function applyImport(parsed){
 
   if(replace){
     // Clear affected positions
-    const affected = [...new Set(data.map(q=>q.posId))];
+    const affected = [...new Set(data.map(q=>q.deptKey||q.posId))];
     affected.forEach(id => { appQuestions[id] = []; });
   }
 
   data.forEach(q => {
-    if(!appQuestions[q.posId]) appQuestions[q.posId] = [];
-    appQuestions[q.posId].push({text:q.text, options:q.options, correct:q.correct});
+    if(SECTIONS.includes(q.posId)){
+      if(!appQuestions[q.posId]) appQuestions[q.posId] = [];
+      appQuestions[q.posId].push({text:q.text, options:q.options, correct:q.correct});
+    }
   });
 
   showToast('Сохраняем...');
@@ -1589,6 +1623,7 @@ function updateQText(qi,v){appQuestions[adminPos][qi].text=v;}
 function updateOpt(qi,oi,v){appQuestions[adminPos][qi].options[oi]=v;}
 function updateCorrect(qi,oi){appQuestions[adminPos][qi].correct=oi;}
 function addQ(){
+  if(!SECTIONS.includes(adminPos))return;
   if(!appQuestions[adminPos])appQuestions[adminPos]=[];
   appQuestions[adminPos].push({text:'',options:['','','',''],correct:0});
   renderAdmin();
@@ -1603,7 +1638,7 @@ async function saveAdminQuestions(){
 }
 async function resetToDefault(){
   if(!confirm('Удалить все вопросы? Это действие нельзя отменить.'))return;
-  appQuestions = {nachalnik:[], inspektor:[], doznavatel:[]};
+  appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[]};
   showToast('Сохраняем...');
   const ok = await saveQuestions();
   renderAdmin();

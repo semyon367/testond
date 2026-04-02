@@ -353,6 +353,77 @@ html { scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
   padding-right: max(20px, env(safe-area-inset-right));
   padding-bottom: max(80px, calc(env(safe-area-inset-bottom) + 40px));
 }
+
+/* ── GLOBAL TIMER ── */
+.global-timer-wrap{
+  display:flex;align-items:center;gap:12px;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:8px;padding:12px 18px;margin-bottom:20px;
+  box-shadow:0 2px 0 var(--border);
+}
+.global-timer-icon{font-size:18px;flex-shrink:0;}
+.global-timer-bar-bg{flex:1;height:8px;background:var(--border);border-radius:99px;overflow:hidden;}
+.global-timer-bar{height:100%;border-radius:99px;background:var(--success);transition:width 1s linear,background .4s;}
+.global-timer-bar.warn{background:var(--warn);}
+.global-timer-bar.danger{background:var(--error);}
+.global-timer-num{
+  font-family:'Raleway',sans-serif;font-size:16px;font-weight:800;
+  color:var(--ink2);min-width:50px;text-align:right;
+  font-variant-numeric:tabular-nums;
+}
+.global-timer-num.warn{color:var(--warn);}
+.global-timer-num.danger{color:var(--error);}
+
+/* ── QUESTION NAVIGATION DOTS (clickable) ── */
+.q-nav-dots{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px;}
+.q-nav-dot{
+  width:32px;height:32px;border-radius:6px;
+  border:1.5px solid var(--border);
+  background:var(--card);
+  font-family:'Raleway',sans-serif;font-size:11px;font-weight:800;
+  color:var(--muted);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:all .18s;flex-shrink:0;
+  touch-action:manipulation;
+}
+.q-nav-dot:hover{border-color:var(--accent);color:var(--accent);}
+.q-nav-dot.current{background:var(--accent);border-color:var(--accent);color:#fff;}
+.q-nav-dot.answered{background:var(--success-bg);border-color:var(--success);color:var(--success);}
+.q-nav-dot.answered.current{background:var(--accent);border-color:var(--accent);color:#fff;}
+.q-nav-dot.skipped{background:var(--error-bg);border-color:var(--error);color:var(--error);}
+
+/* ── QUOTA EDITOR ── */
+.quota-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:14px;}
+.quota-table th{padding:9px 12px;text-align:left;font-size:10px;font-weight:800;
+  letter-spacing:.12em;text-transform:uppercase;background:var(--navy);color:#fff;}
+.quota-table td{padding:8px 12px;border-bottom:1px solid var(--border2);}
+.quota-table tr:last-child td{border-bottom:none;}
+.quota-table input[type=number]{
+  width:60px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;
+  font-family:'Raleway',sans-serif;font-size:13px;font-weight:700;
+  text-align:center;background:var(--card);outline:none;
+}
+.quota-table input[type=number]:focus{border-color:var(--accent);}
+.quota-total{font-weight:800;color:var(--accent);}
+.quota-total.ok{color:var(--success);}
+.quota-total.err{color:var(--error);}
+.dept-row td{vertical-align:middle;}
+
+/* ── ADMIN SECTIONS EDITOR ── */
+.section-pill{
+  display:inline-flex;align-items:center;gap:8px;
+  background:var(--card);border:1.5px solid var(--border);
+  border-radius:99px;padding:6px 14px;font-size:13px;font-weight:600;
+  margin:4px;
+}
+.section-pill .pill-del{
+  cursor:pointer;color:var(--error);font-size:14px;line-height:1;
+  background:none;border:none;padding:0;
+  touch-action:manipulation;
+}
+.section-pill .pill-del:hover{opacity:.7;}
+.add-section-row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;}
+.add-section-row input[type=text]{max-width:160px;font-size:13px;padding:8px 12px;}
 </style>
 </head>
 <body>
@@ -674,18 +745,21 @@ html { scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
     </div>
   </div>
   <div id="step-question" style="display:none">
-    <div class="progress-row" id="q-progress-row">
-      <div class="progress-steps" id="q-dots"></div>
-      <div class="progress-label" id="q-prog-label">1 / 10</div>
+    <!-- Global Timer -->
+    <div class="global-timer-wrap" id="q-progress-row">
+      <div class="global-timer-icon">⏱</div>
+      <div class="global-timer-bar-bg">
+        <div class="global-timer-bar" id="global-timer-bar" style="width:100%"></div>
+      </div>
+      <div class="global-timer-num" id="global-timer-num">5:00</div>
     </div>
+    <!-- Nav dots -->
+    <div class="q-nav-dots" id="q-nav-dots"></div>
     <div class="card">
       <div class="q-meta">
         <div class="q-counter" id="q-num-lbl"></div>
+        <div class="progress-label" id="q-prog-label" style="font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.1em"></div>
         <div class="q-pos-tag" id="q-pos-tag"></div>
-      </div>
-      <div class="timer-wrap">
-        <div class="timer-bar-bg"><div class="timer-bar" id="timer-bar" style="width:100%"></div></div>
-        <div class="timer-num" id="timer-num">30с</div>
       </div>
       <div class="q-text" id="q-text"></div>
       <div class="options" id="q-opts"></div>
@@ -773,8 +847,9 @@ let currentQ = 0, testQuestions = [], answers = {};
 let adminUnlocked = false;
 let committed = {}; // questions where user pressed Далее
 let timerInterval = null;
-const TIMER_SECONDS = 30;
+const TOTAL_TEST_SECONDS = 5 * 60; // 5 minutes total
 const TEST_QUESTIONS_COUNT = 10;
+let testTimeRemaining = TOTAL_TEST_SECONDS;
 let lastTestEntry = null;
 
 // ══════════════════════════════════
@@ -1054,23 +1129,41 @@ function goToTest(){
   testQuestions = picked.sort(() => Math.random() - .5);
   userFio=fv;userOtdel=ov;
   currentQ=0;answers={};committed={};lastTestEntry=null;
+  testTimeRemaining = TOTAL_TEST_SECONDS;
   document.getElementById('step-start').style.display='none';
   document.getElementById('step-question').style.display='block';
-  buildDots();renderQ();startTimer();
+  buildNavDots();renderQ();startTimer();
 }
 
 // ══════════════════════════════════
 // QUESTION
 // ══════════════════════════════════
-function buildDots(){
-  document.getElementById('q-dots').innerHTML=testQuestions.map((_,i)=>`<div class="step-dot" id="dot-${i}"></div>`).join('');
+function buildNavDots(){
+  const wrap = document.getElementById('q-nav-dots');
+  if(!wrap) return;
+  wrap.innerHTML = testQuestions.map((_,i) =>
+    `<div class="q-nav-dot" id="navdot-${i}" onclick="jumpToQ(${i})">${i+1}</div>`
+  ).join('');
 }
-function updateDots(){
-  testQuestions.forEach((_,i)=>{const d=document.getElementById('dot-'+i);if(!d)return;d.className='step-dot'+(i<currentQ?' done':i===currentQ?' active':'');});
+function updateNavDots(){
+  testQuestions.forEach((_,i)=>{
+    const d=document.getElementById('navdot-'+i);
+    if(!d) return;
+    let cls='q-nav-dot';
+    if(i===currentQ) cls+=' current';
+    if(answers[i]!==undefined && answers[i]!==-1) cls+=' answered';
+    else if(answers[i]===-1) cls+=' skipped';
+    d.className=cls;
+  });
   document.getElementById('q-prog-label').textContent=`${currentQ+1} / ${testQuestions.length}`;
 }
+function jumpToQ(i){
+  if(i===currentQ) return;
+  currentQ=i;
+  renderQ();
+}
 function renderQ(){
-  updateDots();
+  updateNavDots();
   const q=testQuestions[currentQ];
   const pos=POSITIONS.find(p=>p.id===selectedPos);
   const letters=['А','Б','В','Г'];
@@ -1092,17 +1185,17 @@ function renderQ(){
   document.getElementById('q-prev-btn').style.visibility=currentQ===0?'hidden':'visible';
 }
 function pickAns(i){answers[currentQ]=i;renderQ();}
-function prevQ(){if(currentQ>0){currentQ--;renderQ();}}
+function prevQ(){
+  if(currentQ>0){currentQ--;renderQ();}
+}
 function nextQ(){
-  if(answers[currentQ]===undefined){
-    answers[currentQ]=-1;
-  }
+  if(answers[currentQ]===undefined) answers[currentQ]=-1;
   committed[currentQ]=true;
-  stopTimer();
   if(currentQ<testQuestions.length-1){
-    currentQ++;renderQ();startTimer();
+    currentQ++;renderQ();
   } else {
-    finishTest();
+    // All questions done — finish immediately
+    stopTimer();finishTest();
   }
 }
 
@@ -1189,7 +1282,7 @@ async function finishTest(){
   </div>`;
 }
 
-function resetTest(){stopTimer();committed={};
+function resetTest(){stopTimer();committed={};testTimeRemaining=TOTAL_TEST_SECONDS;
   selectedPos=null;userFio='';userOtdel='';answers={};currentQ=0;testQuestions=[];
   document.getElementById('fio').value='';
   document.getElementById('otdel').value='';
@@ -1427,6 +1520,74 @@ async function downloadXLSX(){
 // ADMIN EDITOR
 // ══════════════════════════════════
 let adminPos='oapid';
+
+function buildQuotaEditor(){
+  const sections = Object.keys(SECTION_NAMES);
+  const posNames = {nachalnik:'Начальник', inspektor:'Инспектор', doznavatel:'Дознаватель'};
+  let th = '<tr><th>Должность</th>' + sections.map(s=>`<th>${SECTION_NAMES[s]}<br><span style="font-weight:400;opacity:.6">${(appQuestions[s]||[]).length} вопр.</span></th>`).join('') + '<th>Итого</th></tr>';
+  let rows = Object.entries(QUOTAS).map(([posId, quota])=>{
+    const total = Object.values(quota).reduce((s,n)=>s+n,0);
+    const tCls = total===10?'quota-total ok':'quota-total err';
+    const cells = sections.map(s=>`<td><input type="number" min="0" max="99" value="${quota[s]||0}" onchange="updateQuota('${posId}','${s}',+this.value)" style="width:52px"></td>`).join('');
+    return `<tr class="dept-row"><td><strong>${posNames[posId]}</strong></td>${cells}<td><span class="${tCls}" id="qtotal-${posId}">${total}</span></td></tr>`;
+  }).join('');
+  return `<div style="overflow-x:auto"><table class="quota-table"><thead>${th}</thead><tbody>${rows}</tbody></table></div>
+  <div style="font-size:12px;color:var(--muted);font-weight:500">Итого должно быть 10 вопросов для каждой должности.</div>`;
+}
+
+function updateQuota(posId, secId, val){
+  if(!QUOTAS[posId]) QUOTAS[posId]={};
+  QUOTAS[posId][secId] = Math.max(0, val||0);
+  // Update total display
+  const total = Object.values(QUOTAS[posId]).reduce((s,n)=>s+n,0);
+  const el = document.getElementById('qtotal-'+posId);
+  if(el){ el.textContent=total; el.className='quota-total'+(total===10?' ok':' err'); }
+}
+
+function buildSectionsEditor(){
+  const pills = Object.entries(SECTION_NAMES).map(([id,name])=>`
+    <span class="section-pill">
+      <span>${name} <span style="color:var(--muted);font-weight:400">(${id})</span></span>
+      <button class="pill-del" onclick="deleteSection('${id}')" title="Удалить отдел">✕</button>
+    </span>`).join('');
+  return `<div style="font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Отделы</div>
+  <div id="section-pills">${pills}</div>
+  <div class="add-section-row">
+    <input type="text" id="new-sec-id" placeholder="Код (напр. кадры)" style="max-width:130px;font-size:13px;padding:8px 12px">
+    <input type="text" id="new-sec-name" placeholder="Название" style="max-width:150px;font-size:13px;padding:8px 12px">
+    <button class="btn btn-ghost" style="padding:8px 16px;font-size:11px" onclick="addSection()">+ Добавить отдел</button>
+  </div>`;
+}
+
+function deleteSection(id){
+  if(!confirm('Удалить отдел «' + (SECTION_NAMES[id]||id) + '»? Все его вопросы будут удалены.')) return;
+  delete SECTION_NAMES[id];
+  delete appQuestions[id];
+  // Remove from SECTIONS array
+  const idx = SECTIONS.indexOf(id);
+  if(idx>=0) SECTIONS.splice(idx,1);
+  // Remove from all quotas
+  for(const q of Object.values(QUOTAS)) delete q[id];
+  renderAdmin();
+}
+
+function addSection(){
+  const idRaw = document.getElementById('new-sec-id').value.trim();
+  const name  = document.getElementById('new-sec-name').value.trim();
+  if(!idRaw||!name){ showToast('Введите код и название отдела'); return; }
+  const id = idRaw.toLowerCase().replace(/\s+/g,'_');
+  if(SECTION_NAMES[id]){ showToast('Отдел с таким кодом уже существует'); return; }
+  SECTION_NAMES[id] = name;
+  SECTIONS.push(id);
+  appQuestions[id] = [];
+  // Add to all quotas with 0
+  for(const q of Object.values(QUOTAS)) q[id] = 0;
+  // Add to SEC_MAP
+  SEC_MAP[idRaw.toLowerCase()] = id;
+  SEC_MAP[name.toLowerCase()] = id;
+  renderAdmin();
+}
+
 async function renderAdmin(){
   const el=document.getElementById('admin-content');
   // Load full questions including correct answers for admin editing
@@ -1454,16 +1615,22 @@ async function renderAdmin(){
       <div class="import-sub">Столбцы: Отдел (ОАПиД/ООНиПМ/ГО/ЛК/НТО) | Вопрос | Вариант А | Вариант Б | Вариант В | Вариант Г | Правильный (А/Б/В/Г)</div>
     </div>
     <div id="import-result"></div>
-    <div style="margin-bottom:8px">
-      <a href="#" onclick="downloadTemplate();return false;" style="font-size:12px;font-weight:700;color:var(--accent);text-decoration:none;">⬇ Скачать шаблон XLSX</a>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;font-weight:700;">
+      <a href="#" onclick="downloadTemplate();return false;" style="color:var(--accent);text-decoration:none;">⬇ Скачать шаблон</a>
+      <a href="#" onclick="downloadCurrentQuestions();return false;" style="color:var(--success);text-decoration:none;">⬇ Скачать текущие вопросы</a>
     </div>
   </div>
   <div class="admin-section"><h3>Должность</h3><div style="display:flex;gap:8px;flex-wrap:wrap">${tabs}</div></div>
   <div class="admin-section"><h3>${SECTION_NAMES[adminPos]||adminPos} — ${qs.length} вопросов</h3>
   ${qBlocks||'<div class="empty-state"><div class="empty-icon">❓</div><p>Нет вопросов. Добавьте первый!</p></div>'}
   <button class="add-q-btn" onclick="addQ()">+ Добавить вопрос</button></div>
+  <div class="admin-section">
+    <h3>Отделы и квоты вопросов</h3>
+    <div id="quota-editor">${buildQuotaEditor()}</div>
+    <div id="sections-editor" style="margin-top:16px">${buildSectionsEditor()}</div>
+  </div>
   <div class="btn-actions" style="justify-content:flex-end">
-    <button class="btn btn-ghost" onclick="resetToDefault()">↩ Сбросить</button>
+    <button class="btn btn-ghost" onclick="resetToDefault()">↩ Сбросить вопросы</button>
     <button class="btn btn-gold" onclick="saveAdminQuestions()">💾 Сохранить</button>
   </div>`;
 }
@@ -1622,14 +1789,34 @@ async function applyImport(parsed){
   }
 }
 
+function downloadCurrentQuestions(){
+  // Export current questions from appQuestions to XLSX
+  const rows = [['Отдел','Вопрос','Вариант А','Вариант Б','Вариант В','Вариант Г','Правильный (А/Б/В/Г)']];
+  const letterMap = ['А','Б','В','Г'];
+  for(const [secId, qs] of Object.entries(appQuestions)){
+    const secName = SECTION_NAMES[secId] || secId;
+    for(const q of qs){
+      rows.push([secName, q.text, q.options[0], q.options[1], q.options[2], q.options[3],
+        q.correct >= 0 ? letterMap[q.correct] : '']);
+    }
+  }
+  if(rows.length <= 1){ showToast('Нет вопросов для экспорта'); return; }
+  _buildAndDownloadXLSX(rows, 'voprosy_tekushchie.xlsx');
+}
+
 function downloadTemplate(){
-  // Build a template XLSX with header + 3 example rows
   const rows = [
-    ['Должность','Вопрос','Вариант А','Вариант Б','Вариант В','Вариант Г','Правильный (А/Б/В/Г)'],
-    ['Начальник','Пример вопроса для начальника?','Ответ 1','Ответ 2','Ответ 3','Ответ 4','А'],
-    ['Инспектор','Пример вопроса для инспектора?','Вариант А','Вариант Б','Вариант В','Вариант Г','В'],
-    ['Дознаватель','Пример вопроса для дознавателя?','Первый','Второй','Третий','Четвёртый','Б'],
+    ['Отдел','Вопрос','Вариант А','Вариант Б','Вариант В','Вариант Г','Правильный (А/Б/В/Г)'],
+    ['ОАПиД','Пример вопроса для ОАПиД?','Ответ 1','Ответ 2','Ответ 3','Ответ 4','А'],
+    ['ООНиПМ','Пример вопроса для ООНиПМ?','Вариант А','Вариант Б','Вариант В','Вариант Г','В'],
+    ['ГО','Пример вопроса по ГО?','Первый','Второй','Третий','Четвёртый','Б'],
+    ['ЛК','Пример вопроса по ЛК?','Один','Два','Три','Четыре','Г'],
+    ['НТО','Пример вопроса по НТО?','А вариант','Б вариант','В вариант','Г вариант','Б'],
   ];
+  _buildAndDownloadXLSX(rows, 'shablon_voprosy.xlsx');
+}
+
+function _buildAndDownloadXLSX(rows, filename){
   // Use the same OOXML builder pattern
   const esc2 = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const cl = n => { let s=''; n++; while(n>0){s=String.fromCharCode(65+(n-1)%26)+s;n=Math.floor((n-1)/26);}return s; };
@@ -1708,20 +1895,19 @@ function showToast(msg){const t=document.getElementById('toast');t.textContent=m
 // TIMER
 // ══════════════════════════════════
 function startTimer(){
-  stopTimer();
-  let remaining = TIMER_SECONDS;
-  updateTimerUI(remaining);
+  // Global timer — only start fresh at beginning of test
+  if(timerInterval) return; // already running
   timerInterval = setInterval(()=>{
-    remaining--;
-    updateTimerUI(remaining);
-    if(remaining<=0){
+    testTimeRemaining--;
+    updateTimerUI(testTimeRemaining);
+    if(testTimeRemaining <= 0){
       stopTimer();
-      if(answers[currentQ]===undefined) answers[currentQ]=-1;
-      committed[currentQ]=true;
-      document.getElementById('q-next-btn').disabled=false;
-      setTimeout(()=>nextQ(), 400);
+      // Mark all unanswered as -1 (timeout)
+      testQuestions.forEach((_,i)=>{ if(answers[i]===undefined) answers[i]=-1; });
+      finishTest();
     }
   }, 1000);
+  updateTimerUI(testTimeRemaining);
 }
 
 function stopTimer(){
@@ -1729,16 +1915,18 @@ function stopTimer(){
 }
 
 function updateTimerUI(remaining){
-  const bar = document.getElementById('timer-bar');
-  const num = document.getElementById('timer-num');
+  const bar = document.getElementById('global-timer-bar');
+  const num = document.getElementById('global-timer-num');
   if(!bar||!num) return;
-  const pct = (remaining / TIMER_SECONDS) * 100;
+  const pct = (remaining / TOTAL_TEST_SECONDS) * 100;
   bar.style.width = pct + '%';
-  num.textContent = remaining + 'с';
-  const warn = remaining <= 10;
-  const danger = remaining <= 5;
-  bar.className = 'timer-bar' + (danger?' danger':warn?' warn':'');
-  num.className = 'timer-num' + (danger?' danger':warn?' warn':'');
+  const mins = Math.floor(remaining/60);
+  const secs = remaining % 60;
+  num.textContent = mins + ':' + String(secs).padStart(2,'0');
+  const warn = remaining <= 60;
+  const danger = remaining <= 30;
+  bar.className = 'global-timer-bar' + (danger?' danger':warn?' warn':'');
+  num.className = 'global-timer-num' + (danger?' danger':warn?' warn':'');
 }
 
 </script>

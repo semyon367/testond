@@ -858,16 +858,9 @@ let lastTestEntry = null;
 async function loadQuestions() {
   appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[]};
   try {
-    // 8 second timeout on all requests
-    const fetchWithTimeout = (url, opts, ms=8000) => {
-      const ctrl = new AbortController();
-      const t = setTimeout(()=>ctrl.abort(), ms);
-      return fetch(url, {...opts, signal:ctrl.signal}).finally(()=>clearTimeout(t));
-    };
-    const resp = await fetchWithTimeout(
-      SB_URL + '/rest/v1/questions_public?select=id,pos_id,text,opt_a,opt_b,opt_c,opt_d&order=id.asc',
-      {headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}}
-    );
+    const resp = await fetch(SB_URL + '/rest/v1/questions_public?select=id,pos_id,text,opt_a,opt_b,opt_c,opt_d&order=id.asc', {
+      headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}
+    });
     if (resp.ok) {
       const rows = await resp.json();
       if (rows.length > 0) {
@@ -880,10 +873,9 @@ async function loadQuestions() {
       }
     }
     // Fallback: app_config
-    const r2 = await fetchWithTimeout(
-      SB_URL + '/rest/v1/app_config?key=eq.questions&select=value',
-      {headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}}
-    );
+    const r2 = await fetch(SB_URL + '/rest/v1/app_config?key=eq.questions&select=value', {
+      headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}
+    });
     if (r2.ok) {
       const data = await r2.json();
       if (data && data.length && data[0].value) {
@@ -1091,18 +1083,15 @@ function showPage(name){
 // ══════════════════════════════════
 function renderPositions(){
   const totalQ = SECTIONS.reduce((s,sec)=>s+(appQuestions[sec]||[]).length, 0);
-  const loading = totalQ === 0;
   document.getElementById('pos-list').innerHTML=POSITIONS.map(p=>{
     const quota = QUOTAS[p.id]||{};
     const cnt = Object.entries(quota).reduce((s,[sec,n])=>s+Math.min(n,(appQuestions[sec]||[]).length),0);
     const needed = Object.values(quota).reduce((s,n)=>s+n,0);
     const ready = cnt >= needed;
-    const badgeStyle = loading ? 'color:var(--muted)' : (ready ? '' : 'color:var(--warn)');
-    const badgeText = loading ? '...' : `${needed} вопр.`;
     return `<div class="pos-option${selectedPos===p.id?' selected':''}" data-id="${p.id}" onclick="selectPos('${p.id}')">
       <div class="pos-check">${selectedPos===p.id?'✓':''}</div>
       <div class="pos-info"><div class="pos-name">${p.name}</div><div class="pos-sub">${p.sub}</div></div>
-      <div class="pos-badge" style="${badgeStyle}">${badgeText}</div>
+      <div class="pos-badge" style="${ready?'':'color:var(--warn)'}">${needed} вопр.</div>
     </div>`;
   }).join('');
 }
@@ -1132,12 +1121,7 @@ function goToTest(){
     if (taken.length < count) missing.push(`${SECTION_NAMES[sec]}: нужно ${count}, есть ${pool.length}`);
   }
   if (picked.length === 0) {
-    const totalQ = SECTIONS.reduce((s,sec)=>s+(appQuestions[sec]||[]).length, 0);
-    if(totalQ === 0){
-      showToast('Вопросы ещё загружаются. Подождите секунду и попробуйте снова.');
-    } else {
-      showToast('Недостаточно вопросов в базе. Добавьте вопросы в Редакторе.');
-    }
+    showToast('Нет вопросов в базе. Добавьте вопросы в Редакторе.');
     return;
   }
   if (missing.length) showToast('Недостаточно вопросов: ' + missing.join('; '));
@@ -1906,13 +1890,7 @@ function showToast(msg){const t=document.getElementById('toast');t.textContent=m
 // ══════════════════════════════════
 // INIT
 // ══════════════════════════════════
-(async()=>{
-  // Show positions immediately so UI is never empty
-  renderPositions();
-  // Then load questions from DB and refresh
-  await loadQuestions();
-  renderPositions();
-})();
+(async()=>{await loadQuestions();renderPositions();})();
 // ══════════════════════════════════
 // TIMER
 // ══════════════════════════════════

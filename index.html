@@ -751,7 +751,7 @@ html { scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
       <div class="global-timer-bar-bg">
         <div class="global-timer-bar" id="global-timer-bar" style="width:100%"></div>
       </div>
-      <div class="global-timer-num" id="global-timer-num">5:00</div>
+      <div class="global-timer-num" id="global-timer-num">10:00</div>
     </div>
     <!-- Nav dots -->
     <div class="q-nav-dots" id="q-nav-dots"></div>
@@ -847,7 +847,7 @@ let currentQ = 0, testQuestions = [], answers = {};
 let adminUnlocked = false;
 let committed = {}; // questions where user pressed Далее
 let timerInterval = null;
-const TOTAL_TEST_SECONDS = 5 * 60; // 5 minutes total
+const TOTAL_TEST_SECONDS = 10 * 60; // 10 minutes total
 const TEST_QUESTIONS_COUNT = 10;
 let testTimeRemaining = TOTAL_TEST_SECONDS;
 let lastTestEntry = null;

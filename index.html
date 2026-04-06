@@ -1651,16 +1651,16 @@ const SEC_MAP = {
   'оапид':  'oapid', 'oapid':  'oapid', 'оапид.': 'oapid',
   'оонипм': 'oonpm', 'оонипм.':'oonpm', 'оониим': 'oonpm',
   'оонпм':  'oonpm', 'oonpm':  'oonpm', 'ооніпм': 'oonpm',
-  'административный':  'adm',
   'го':     'go',    'go':     'go',
   'лк':     'lk',    'lk':     'lk',
   'нто':    'nto',   'nto':    'nto',
-  'администратиынй':    'adm',   'adm':    'adm',
+  'административный': 'adm',   'adm':   'adm',
+  'админ':            'adm',
 };
 
 function posIdFromName(name){
   if(!name) return null;
-  const n = String(name).trim().toLowerCase();
+  const n = String(name).trim().toLowerCase().replace(/\s+/g,' ');
   if(SEC_MAP[n]) return SEC_MAP[n];
   for(const [k,v] of Object.entries(SEC_MAP)){
     if(n.includes(k)) return v;
@@ -1710,7 +1710,7 @@ async function handleImportFile(file){
     const posId = posIdFromName(posName);
     const correctIdx = letterMap[correct.charAt(0)];
 
-    if(!posId)    { errors.push({ri:ri+2, msg:`Неизвестный отдел: "${posName}". Допустимо: ОАПиД, ООНиПМ, ГО, ЛК, НТО`}); return; }
+    if(!posId)    { errors.push({ri:ri+2, msg:`Неизвестный отдел: "${posName}". Допустимо: ОАПиД, ООНиПМ, ГО, ЛК, НТО, Административный`}); return; }
     if(!qText)    { errors.push({ri:ri+2, msg:'Пустой вопрос'}); return; }
     if(!optA||!optB||!optC||!optD) { errors.push({ri:ri+2, msg:'Не все варианты ответов заполнены'}); return; }
     if(correctIdx===undefined) { errors.push({ri:ri+2, msg:`Неверное значение правильного ответа: "${row[6]}"`}); return; }

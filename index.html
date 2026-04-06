@@ -821,20 +821,21 @@ const POSITIONS = [
 
 
 // Sections (отделы) — ключи хранения вопросов
-const SECTIONS = ['oapid','oonpm','go','lk','nto'];
+const SECTIONS = ['oapid','oonpm','go','lk','nto', 'adm'];
 const SECTION_NAMES = {
   oapid: 'ОАПиД',
   oonpm: 'ООНиПМ',
   go:    'ГО',
   lk:    'ЛК',
   nto:   'НТО',
+  adm:   'Административный',
 };
 
 // Квоты вопросов по должностям: {секция: количество}
 const QUOTAS = {
-  nachalnik:  { oapid:2, oonpm:2, go:2, lk:2, nto:2 },   // итого 10
-  inspektor:  { oapid:0, oonpm:3, go:2, lk:2, nto:3 },   // итого 10
-  doznavatel: { oapid:6, oonpm:1, go:1, lk:1, nto:1 },   // итого 10
+  nachalnik:  { oapid:2, oonpm:2, go:2, lk:1, nto:2, adm:1 },   // итого 10
+  inspektor:  { oapid:0, oonpm:3, go:2, lk:1, nto:3, adm:1 },   // итого 10
+  doznavatel: { oapid:5, oonpm:1, go:1, lk:1, nto:1, adm:1 },   // итого 10
 };
 
 // ══════════════════════════════════

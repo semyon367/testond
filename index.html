@@ -841,7 +841,7 @@ const QUOTAS = {
 // ══════════════════════════════════
 // STATE
 // ══════════════════════════════════
-let appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[]};
+let appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[], adm:[]};
 let selectedPos = null;
 let userFio = '', userOtdel = '';
 let currentQ = 0, testQuestions = [], answers = {};
@@ -857,7 +857,7 @@ let lastTestEntry = null;
 // STORAGE
 // ══════════════════════════════════
 async function loadQuestions() {
-  appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[]};
+  appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[], adm:[]};
   try {
     const resp = await fetch(SB_URL + '/rest/v1/questions_public?select=id,pos_id,text,opt_a,opt_b,opt_c,opt_d&order=id.asc', {
       headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}
@@ -889,7 +889,7 @@ async function loadQuestions() {
       }
     }
   } catch(e) {
-    appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[]};
+    appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[], adm:[]};
   }
 }
 
@@ -908,7 +908,7 @@ async function loadQuestionsAdmin() {
       // No questions yet — admin needs to add via editor or import
     }
   } catch(e) {
-    appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[]};
+    appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[], adm:[]};
   }
 }
 
@@ -1651,9 +1651,11 @@ const SEC_MAP = {
   'оапид':  'oapid', 'oapid':  'oapid', 'оапид.': 'oapid',
   'оонипм': 'oonpm', 'оонипм.':'oonpm', 'оониим': 'oonpm',
   'оонпм':  'oonpm', 'oonpm':  'oonpm', 'ооніпм': 'oonpm',
+  'административный':  'adm',
   'го':     'go',    'go':     'go',
   'лк':     'lk',    'lk':     'lk',
   'нто':    'nto',   'nto':    'nto',
+  'администратиынй':    'adm',   'adm':    'adm',
 };
 
 function posIdFromName(name){
@@ -1719,7 +1721,7 @@ async function handleImportFile(file){
   // Count by dept
   const counts = {};
   parsed.forEach(q => { counts[q.posId] = (counts[q.posId]||0)+1; });
-  const posNames = {oapid:'ОАПиД', oonpm:'ООНиПМ', go:'ГО', lk:'ЛК', nto:'НТО'};
+  const posNames = {oapid:'ОАПиД', oonpm:'ООНиПМ', go:'ГО', lk:'ЛК', nto:'НТО', adm: 'Административный'};
 
   const statsHtml = Object.entries(counts).map(([id,cnt])=>
     `<div class="import-stat"><span style="color:var(--accent)">${cnt}</span>${posNames[id]||id}</div>`
@@ -1874,7 +1876,7 @@ async function saveAdminQuestions(){
 }
 async function resetToDefault(){
   if(!confirm('Удалить все вопросы? Это действие нельзя отменить.'))return;
-  appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[]};
+  appQuestions = {oapid:[], oonpm:[], go:[], lk:[], nto:[], adm:[]};
   showToast('Сохраняем...');
   const ok = await saveQuestions();
   renderAdmin();
